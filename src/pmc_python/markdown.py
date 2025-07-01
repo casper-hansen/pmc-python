@@ -1,0 +1,304 @@
+import pandas as pd
+from lxml import etree
+from typing import Dict, Any, List
+import re
+from .text import to_text
+from .table import to_table
+from .metadata import to_metadata
+from .reference import to_reference
+
+
+def to_markdown(doc: etree._Element) -> str:
+    """
+    Convert PubMed Central XML to formatted markdown with integrated tables and figures
+    
+    Parameters
+    ----------
+    doc : lxml.etree._Element
+        XML document from PubMed Central
+    include_references : bool, default True
+        Whether to include references section
+    include_tables : bool, default True
+        Whether to include tables inline
+    include_figures : bool, default True
+        Whether to include figure captions inline
+        
+    Returns
+    -------
+    str
+        Formatted markdown document with integrated content
+    """
+    if not isinstance(doc, etree._Element):
+        raise ValueError("doc should be an XML document from PubMed Central")
+    
+    markdown_parts = []
+    
+    metadata = to_metadata(doc)
+    if metadata:
+        markdown_parts.append(_format_metadata_header(metadata))
+    
+    text_data = to_text(doc)
+    tables = to_table(doc)
+    
+    if text_data is not None:
+        integrated_content = _format_integrated_content(text_data, tables)
+        markdown_parts.append(integrated_content)
+    
+    references = to_reference(doc)
+    if references is not None:
+        markdown_parts.append(_format_references(references))
+    
+    return "\n\n".join(filter(None, markdown_parts))
+
+
+def _format_metadata_header(metadata: Dict[str, Any]) -> str:
+    """Format metadata as markdown header"""
+    parts = []
+    
+    if 'Title' in metadata and metadata['Title']:
+        parts.append(f"# {metadata['Title']}")
+    
+    if 'Authors' in metadata and metadata['Authors']:
+        authors = metadata['Authors']
+        if isinstance(authors, list):
+            authors_str = ", ".join(authors)
+        else:
+            authors_str = str(authors)
+        parts.append(f"**Authors:** {authors_str}")
+    
+    if 'Journal' in metadata and metadata['Journal']:
+        parts.append(f"**Journal:** {metadata['Journal']}")
+    
+    if 'Year' in metadata and metadata['Year']:
+        parts.append(f"**Year:** {metadata['Year']}")
+    
+    if 'PMCID' in metadata and metadata['PMCID']:
+        parts.append(f"**PMCID:** {metadata['PMCID']}")
+    
+    if 'DOI' in metadata and metadata['DOI']:
+        parts.append(f"**DOI:** {metadata['DOI']}")
+    
+    return "\n\n".join(parts)
+
+
+def _format_integrated_content(text_data: pd.DataFrame, tables) -> str:
+    """Format text content with integrated tables and figures"""
+    if text_data.empty:
+        return ""
+    
+    table_lookup = {}
+    
+    if tables:
+        if isinstance(tables, dict):
+            table_lookup = tables
+        else:
+            table_lookup = {f"Table {i}": table for i, table in enumerate(tables, 1)}
+    
+    markdown_parts = []
+    current_section = None
+    current_paragraphs = []
+    
+    for _, row in text_data.iterrows():
+        section = row['section']
+        text = row['text']
+        
+        if section != current_section:
+            if current_section is not None and current_paragraphs:
+                section_content = _format_section(current_section, current_paragraphs, table_lookup)
+                markdown_parts.append(section_content)
+            
+            current_section = section
+            current_paragraphs = []
+        
+        current_paragraphs.append(text)
+    
+    if current_section is not None and current_paragraphs:
+        section_content = _format_section(current_section, current_paragraphs, table_lookup)
+        markdown_parts.append(section_content)
+    
+    return "\n\n".join(markdown_parts)
+
+
+def _format_single_table(table: pd.DataFrame, table_name: str) -> str:
+    """Format a single table as markdown"""
+    if not isinstance(table, pd.DataFrame) or table.empty:
+        return ""
+    
+    table_copy = table.copy()
+    table_copy.columns = [str(col).replace('\n', ' ').strip() for col in table_copy.columns]
+    
+    headers = " | ".join(table_copy.columns)
+    separator = " | ".join(["---"] * len(table_copy.columns))
+    
+    rows = []
+    for _, row in table_copy.iterrows():
+        row_data = [str(val).replace('\n', ' ').strip() if pd.notna(val) else "" for val in row]
+        rows.append(" | ".join(row_data))
+    
+    table_md = f"**{table_name}**\n\n| {headers} |\n| {separator} |\n" + "\n".join(f"| {row} |" for row in rows)
+    
+    return table_md
+
+
+def _format_section(section_name: str, paragraphs: List[str], table_lookup: dict = None) -> str:
+    """Format a section with appropriate heading level"""
+    if ';' in section_name:
+        parts = [part.strip() for part in section_name.split(';')]
+        if parts[0] == "Abstract":
+            if len(parts) == 2:
+                section_title = f"{parts[0]} - {parts[1]}"
+                heading_level = 2
+            else:
+                section_title = parts[-1]
+                heading_level = min(len(parts) + 1, 6)
+        else:
+            heading_level = min(len(parts) + 1, 6)  # Max heading level is 6
+            section_title = parts[-1].strip()
+    else:
+        heading_level = 2
+        section_title = section_name
+    
+    heading = "#" * heading_level + " " + section_title
+    
+    formatted_paragraphs = []
+    current_para = []
+    
+    for sentence in paragraphs:
+        if sentence.startswith("**") and sentence.endswith("*") and ":" in sentence:
+            if current_para:
+                formatted_paragraphs.append(" ".join(current_para))
+                current_para = []
+            formatted_paragraphs.append(sentence)
+        elif sentence.startswith("TABLE_PLACEHOLDER:"):
+            if current_para:
+                formatted_paragraphs.append(" ".join(current_para))
+                current_para = []
+            if table_lookup:
+                table_name = sentence.replace("TABLE_PLACEHOLDER:", "")
+                if table_name in table_lookup:
+                    table_md = _format_single_table(table_lookup[table_name], table_name)
+                    if table_md:
+                        formatted_paragraphs.append(table_md)
+        else:
+            current_para.append(sentence)
+            if len(current_para) >= 4 or sentence.endswith(('.', '!', '?')):
+                formatted_paragraphs.append(" ".join(current_para))
+                current_para = []
+    
+    if current_para:
+        formatted_paragraphs.append(" ".join(current_para))
+    
+    processed_paragraphs = []
+    for para in formatted_paragraphs:
+        if para.startswith("**") and ":" in para and para.endswith("*"):
+            processed_paragraphs.append(para)
+        elif para.startswith("**") and "|" in para:
+            processed_paragraphs.append(para)
+        else:
+            para = _process_math_formatting(para)
+            para = _process_text_formatting(para)
+            processed_paragraphs.append(para)
+    
+    content = "\n\n".join(processed_paragraphs)
+    
+    return f"{heading}\n\n{content}"
+
+
+def _process_math_formatting(text: str) -> str:
+    """Convert mathematical expressions to KaTeX format"""
+    text = re.sub(r'\b([a-zA-Z])\s*=\s*([0-9.]+)', r'$\1 = \2$', text)
+    text = re.sub(r'\b(p|P)\s*[<>=]\s*([0-9.]+)', r'$\1 \\leq \2$', text)
+    text = re.sub(r'\b(n|N)\s*=\s*([0-9,]+)', r'$n = \2$', text)
+    
+    text = re.sub(r'([0-9.]+)%', r'$\1\\%$', text)
+    
+    text = re.sub(r'([0-9.]+)/([0-9.]+)', r'$\\frac{\1}{\2}$', text)
+    
+    return text
+
+
+def _process_text_formatting(text: str) -> str:
+    """Apply text formatting (bold, italic, etc.)"""
+    text = re.sub(r'\b([A-Z][a-z]+[0-9]*)\b(?=\s+gene|protein)', r'*\1*', text)
+    
+    text = re.sub(r'(?<!^)(?<!\. )\b([A-Z][a-z]+\s+[a-z]+)\b(?=\s)', 
+                  lambda m: f'*{m.group(1)}*' if _is_likely_species_name(m.group(1)) else m.group(1), text)
+    
+    return text
+
+
+def _is_likely_species_name(text: str) -> bool:
+    """Check if text looks like a scientific species name"""
+    words = text.split()
+    if len(words) != 2:
+        return False
+    
+    genus, species = words
+    
+    common_genera = {
+        'Yersinia', 'Escherichia', 'Salmonella', 'Bacillus', 'Staphylococcus', 
+        'Streptococcus', 'Pseudomonas', 'Mycobacterium', 'Clostridium', 'Vibrio',
+        'Listeria', 'Campylobacter', 'Helicobacter', 'Legionella', 'Chlamydia'
+    }
+    
+    sentence_starters = {
+        'Those genes', 'These genes', 'Several genes', 'Many genes', 'Some genes',
+        'Classification of', 'Analysis of', 'Studies of', 'Results of', 'Effects of',
+        'Genes responsible', 'Proteins involved', 'Factors affecting', 'Methods for',
+        'Data from', 'Evidence for', 'Comparison of', 'Expression of', 'Regulation of'
+    }
+    
+    if text in sentence_starters:
+        return False
+    
+    if genus in common_genera:
+        return True
+    
+    species_suffixes = ['is', 'us', 'um', 'a', 'ae', 'ii', 'ensis', 'icus', 'alis']
+    if any(species.endswith(suffix) for suffix in species_suffixes):
+        return True
+    
+    return False
+
+
+def _format_references(references: pd.DataFrame) -> str:
+    """Format references section"""
+    if references.empty:
+        return ""
+    
+    markdown_parts = ["## References"]
+    
+    for i, (_, ref) in enumerate(references.iterrows(), 1):
+        ref_parts = []
+        
+        if pd.notna(ref.get('authors')) and ref['authors']:
+            ref_parts.append(f"{ref['authors']}")
+        
+        if pd.notna(ref.get('title')) and ref['title']:
+            ref_parts.append(f"**{ref['title']}**")
+        
+        journal_parts = []
+        if pd.notna(ref.get('journal')) and ref['journal']:
+            journal_parts.append(f"*{ref['journal']}*")
+        
+        if pd.notna(ref.get('year')) and ref['year']:
+            journal_parts.append(f"({ref['year']})")
+        
+        if pd.notna(ref.get('volume')) and ref['volume']:
+            journal_parts.append(f"**{ref['volume']}**")
+        
+        if pd.notna(ref.get('pages')) and ref['pages']:
+            journal_parts.append(f"{ref['pages']}")
+        
+        if journal_parts:
+            ref_parts.append(" ".join(journal_parts))
+        
+        if pd.notna(ref.get('doi')) and ref['doi']:
+            ref_parts.append(f"DOI: {ref['doi']}")
+        elif pd.notna(ref.get('pmid')) and ref['pmid']:
+            ref_parts.append(f"PMID: {ref['pmid']}")
+        
+        reference_text = ". ".join(filter(None, ref_parts))
+        markdown_parts.append(f"{i}. {reference_text}")
+    
+    return "\n\n".join(markdown_parts)
