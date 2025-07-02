@@ -8,16 +8,8 @@ import spacy
 
 from .utils import path_string
 
-try:
-    _NLP = spacy.load(
-        "en_core_web_sm",
-        disable=["ner", "lemmatizer", "tagger", "attribute_ruler"],
-    )
-except OSError as exc:  # pragma: no cover
-    raise ImportError(
-        "spaCy model 'en_core_web_sm' is not installed. "
-        "Install it by running: python -m spacy download en_core_web_sm"
-    ) from exc
+_NLP = spacy.blank("en")
+_NLP.add_pipe("sentencizer")
 
 def _SENT_TOKENIZE(text: str) -> List[str]:
     """Light wrapper around spaCy to produce a list of sentence strings."""
