@@ -78,6 +78,9 @@ def _format_metadata_header(metadata: Dict[str, Any]) -> str:
     if 'DOI' in metadata and metadata['DOI']:
         parts.append(f"**DOI:** {metadata['DOI']}")
     
+    if 'License' in metadata and metadata['License']:
+        parts.append(f"**License:** {metadata['License']}")
+    
     return "\n\n".join(parts)
 
 

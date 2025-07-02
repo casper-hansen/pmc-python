@@ -1,6 +1,38 @@
 from lxml import etree
 from typing import Optional, Dict, Any
+import re
 
+# XML namespace for xlink
+XLINK_NS = "{http://www.w3.org/1999/xlink}href"
+
+def _parse_license_url(url: str) -> str:
+    """Convert a Creative Commons/public domain license URL to a human-readable identifier.
+
+    Examples
+    --------
+    >>> _parse_license_url('http://creativecommons.org/licenses/by/4.0')
+    'CC BY 4.0'
+    >>> _parse_license_url('http://creativecommons.org/publicdomain/zero/1.0')
+    'CC0 1.0'
+    """
+    if not url:
+        return ""
+    url = url.lower()
+
+    # Handle CC0 which sits under publicdomain path
+    if "publicdomain/zero" in url or "creativecommons.org/zero" in url:
+        version_match = re.search(r"zero/(\d+\.\d+)", url)
+        version = version_match.group(1) if version_match else "1.0"
+        return f"CC0 {version}"
+
+    # Handle standard CC licenses
+    m = re.search(r"licenses/([a-z\-]+)/([\d\.]+)", url)
+    if m:
+        license_code, ver = m.groups()
+        return f"CC {license_code.upper()} {ver}"
+
+    # Fallback to raw URL when no standard pattern matches
+    return url
 
 def to_metadata(doc: etree._Element) -> Optional[Dict[str, Any]]:
     """
@@ -77,6 +109,14 @@ def to_metadata(doc: etree._Element) -> Optional[Dict[str, Any]]:
             if day_elem is not None:
                 metadata['day'] = int(day_elem.text.strip())
     
+    # Extract license information (usually found under <permissions>)
+    license_elem = front.find(".//permissions/license")
+    if license_elem is not None:
+        license_href = license_elem.get(XLINK_NS) or license_elem.get("xlink:href")
+        if license_href:
+            metadata['license_url'] = license_href
+            metadata['license'] = _parse_license_url(license_href)
+
     journal_meta = front.find(".//journal-meta")
     if journal_meta is not None:
         journal_title_elem = journal_meta.find(".//journal-title")
@@ -96,4 +136,20 @@ def to_metadata(doc: etree._Element) -> Optional[Dict[str, Any]]:
     if not metadata:
         return None
     
+    # Duplicate select fields with capitalised keys expected by markdown formatter
+    key_map = {
+        'title': 'Title',
+        'authors': 'Authors',
+        'journal': 'Journal',
+        'year': 'Year',
+        'pmc_id': 'PMCID',
+        'pmid': 'PMID',
+        'doi': 'DOI',
+        'license': 'License',
+    }
+
+    for k_src, k_dest in key_map.items():
+        if k_src in metadata and k_dest not in metadata:
+            metadata[k_dest] = metadata[k_src]
+
     return metadata
