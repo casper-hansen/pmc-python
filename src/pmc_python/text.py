@@ -39,17 +39,20 @@ def to_text(doc: etree._Element) -> Optional[pd.DataFrame]:
     for section in sections:
         section_info = _extract_section_info(section)
         
+        # Ensure the main "Abstract" heading is present even when the abstract
+        # element only contains nested <sec> sub-sections (Background, Results,
+        # etc.) and no direct <p> children. We inject a dummy row so that the
+        # markdown formatter later outputs the heading, while leaving the
+        # content area blank.
         if section.tag == 'abstract':
-            nested_sections = section.xpath(".//sec")
-            if nested_sections:
-                for nested_sec in nested_sections:
-                    nested_info = _extract_section_info(nested_sec)
-                    nested_info['path'] = f"Abstract; {nested_info['path']}"
-                    _process_section_content(nested_sec, nested_info, results)
-            else:
-                _process_section_content(section, section_info, results)
-        else:
-            _process_section_content(section, section_info, results)
+            results.append({
+                'section': section_info['path'],
+                'paragraph': 0,
+                'sentence': 0,
+                'text': ''
+            })
+        
+        _process_section_content(section, section_info, results)
     
     if not results:
         return None
@@ -134,9 +137,24 @@ def _extract_section_info(section: etree._Element) -> Dict[str, Any]:
             return {"path": "Unknown"}
     
     if len(titles) == 1:
-        return {"path": titles[0]}
+        path = titles[0]
     else:
-        return {"path": path_string(titles, levels)}
+        path = path_string(titles, levels)
+
+    # If this section is nested within an <abstract>, prefix the path so that
+    # it is clearly grouped under the Abstract heading when converted to
+    # markdown. The root <abstract> element itself should remain just
+    # "Abstract".
+    parent = section.getparent()
+    while parent is not None:
+        if parent.tag == "abstract":
+            # Only prepend for nested sections, not for the abstract element itself
+            if section.tag != "abstract":
+                path = f"Abstract; {path}"
+            break
+        parent = parent.getparent()
+
+    return {"path": path}
 
 
 def _extract_paragraph_text(para: etree._Element) -> str:

@@ -160,12 +160,14 @@ def _format_section(section_name: str, paragraphs: List[str], table_lookup: dict
     if ';' in section_name:
         parts = [part.strip() for part in section_name.split(';')]
         if parts[0] == "Abstract":
-            if len(parts) == 2:
-                section_title = f"{parts[0]} - {parts[1]}"
+            if len(parts) == 1:
+                section_title = "Abstract"
                 heading_level = 2
             else:
-                section_title = parts[-1]
-                heading_level = min(len(parts) + 1, 6)
+                section_title = parts[-1].strip()
+                heading_level = 3  # ### for first-level subheadings inside Abstract
+                if len(parts) > 2:
+                    heading_level = min(3 + (len(parts) - 2), 6)
         else:
             heading_level = min(len(parts) + 1, 6)  # Max heading level is 6
             section_title = parts[-1].strip()
@@ -214,9 +216,15 @@ def _format_section(section_name: str, paragraphs: List[str], table_lookup: dict
             para = _process_text_formatting(para)
             processed_paragraphs.append(para)
     
-    content = "\n\n".join(processed_paragraphs)
-    
-    return f"{heading}\n\n{content}"
+    content = "\n\n".join(processed_paragraphs).strip()
+    if content:
+        return f"{heading}\n\n{content}"
+    else:
+        # No paragraph content; return just the heading string. The caller will
+        # insert section separators between blocks, so returning the bare
+        # heading avoids accumulating extra blank lines (which previously
+        # produced four newlines between headings).
+        return heading
 
 
 def _process_math_formatting(text: str) -> str:
