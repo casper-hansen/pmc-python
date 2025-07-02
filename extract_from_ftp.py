@@ -2,7 +2,7 @@ import re
 import tarfile
 from io import BytesIO
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -11,6 +11,7 @@ from tqdm import tqdm
 from lxml import etree
 
 import pmc_python
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Constants ---------------------------------------------------------------
 
@@ -81,14 +82,15 @@ def download_tarfile(session: requests.Session, filename: str) -> BytesIO:
         return buf
 
 
-def _process_member(tf: tarfile.TarFile, member: tarfile.TarInfo, output_dir: Path) -> str:
-    """Process a single XML member from *tf* and write markdown when appropriate.
+def _process_xml(xml_bytes: bytes, member_name: str, output_dir_str: str) -> str:
+    """Worker function executed in a separate process.
+
+    Parses *xml_bytes*, applies filtering logic, and writes markdown to *output_dir_str*.
 
     Returns one of the status strings: "saved", "filtered", "error".
     """
     try:
-        with tf.extractfile(member) as f:
-            xml_bytes = f.read()
+        output_dir = Path(output_dir_str)
 
         doc = etree.fromstring(xml_bytes)
 
@@ -103,13 +105,13 @@ def _process_member(tf: tarfile.TarFile, member: tarfile.TarInfo, output_dir: Pa
         article_type = (doc.get("article-type") or "").lower()
         if article_type != "research-article":
             return "filtered"
-            
+
         if not _matches_topic(doc):
             return "filtered"
 
         markdown = pmc_python.to_markdown(doc)
 
-        base_name = Path(member.name).stem
+        base_name = Path(member_name).stem
         output_path = output_dir / f"{base_name}.md"
         with output_path.open("w+", encoding="utf-8") as fh:
             fh.write(markdown)
@@ -118,23 +120,35 @@ def _process_member(tf: tarfile.TarFile, member: tarfile.TarInfo, output_dir: Pa
         return "error"
 
 
-def process_tar(buf: BytesIO, output_dir: Path) -> None:
-    """Extract eligible XML articles from *buf* to markdown in *output_dir*."""
+def process_tar(buf: BytesIO, output_dir: Path, max_workers: Optional[int] = None) -> None:
+    """Extract eligible XML articles from *buf* to markdown in *output_dir* using multiple processes."""
     with tarfile.open(fileobj=buf, mode="r:gz") as tf:
         members = [m for m in tf.getmembers() if m.isfile() and m.name.endswith(".xml")]
+
         saved = filtered = errors = 0
-        with tqdm(total=len(members), desc="Processing XML", leave=False) as pbar:
-            for m in members:
-                status = _process_member(tf, m, output_dir)
-                if status == "saved":
-                    saved += 1
-                elif status == "filtered":
-                    filtered += 1
-                else:
-                    errors += 1
-                pbar.update(1)
-                pbar.set_postfix(saved=saved, filtered=filtered, errors=errors)
-        print(f"Summary => saved: {saved}, filtered: {filtered}, errors: {errors}")
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for m in tqdm(members, desc="Reading XML"):
+                with tf.extractfile(m) as f:
+                    xml_bytes = f.read()
+                futures.append(
+                    executor.submit(_process_xml, xml_bytes, m.name, str(output_dir))
+                )
+
+            with tqdm(total=len(futures), desc="Processing XML", leave=False) as pbar:
+                for fut in as_completed(futures):
+                    status = fut.result()
+                    if status == "saved":
+                        saved += 1
+                    elif status == "filtered":
+                        filtered += 1
+                    else:
+                        errors += 1
+                    pbar.update(1)
+                    pbar.set_postfix(saved=saved, filtered=filtered, errors=errors)
+
+    print(f"Summary => saved: {saved}, filtered: {filtered}, errors: {errors}")
 
 
 # ------------------------------------------------------------------------
