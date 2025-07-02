@@ -47,7 +47,21 @@ def to_text(doc: etree._Element) -> Optional[pd.DataFrame]:
     if not isinstance(doc, etree._Element):
         raise ValueError("doc should be an XML document from PubMed Central")
     
-    sections = doc.xpath("//sec | //abstract")
+    # ---------------------------------------------------------------
+    # Collect structural sections
+    # ---------------------------------------------------------------
+    # 1. Root <body> (for articles that place <p> directly inside it)
+    body_elem = doc.xpath('//*[local-name()="body"]')
+
+    # 2. All <sec> and <abstract> elements in document order.
+    sec_elems = doc.xpath('//*[local-name()="sec" or local-name()="abstract"]')
+
+    # Preserve overall article order: body first (if present), then all other
+    # sections as they appear.
+    sections = []
+    if body_elem:
+        sections.append(body_elem[0])
+    sections.extend(sec_elems)
     
     if not sections:
         return None
@@ -62,7 +76,7 @@ def to_text(doc: etree._Element) -> Optional[pd.DataFrame]:
         # etc.) and no direct <p> children. We inject a dummy row so that the
         # markdown formatter later outputs the heading, while leaving the
         # content area blank.
-        if section.tag == 'abstract':
+        if _tags_equal(section, 'abstract'):
             results.append({
                 'section': section_info['path'],
                 'paragraph': 0,
@@ -82,7 +96,8 @@ def _process_section_content(section: etree._Element, section_info: dict, result
     para_idx = 0
     
     for child in section:
-        if child.tag == 'p':
+        tag = _local_name(child)
+        if tag == 'p':
             para_idx += 1
             para_text = _extract_paragraph_text(child)
             if not para_text.strip():
@@ -99,9 +114,11 @@ def _process_section_content(section: etree._Element, section_info: dict, result
                         'text': sentence.strip()
                     })
         
-        elif child.tag == 'fig':
-            label = child.find('.//label')
-            caption = child.find('.//caption')
+        elif tag == 'fig':
+            label = child.xpath('.//*[local-name()="label"]')
+            caption = child.xpath('.//*[local-name()="caption"]')
+            label = label[0] if label else None
+            caption = caption[0] if caption else None
             if label is not None and caption is not None:
                 label_text = etree.tostring(label, method="text", encoding="unicode").strip()
                 caption_text = etree.tostring(caption, method="text", encoding="unicode").strip()
@@ -112,10 +129,10 @@ def _process_section_content(section: etree._Element, section_info: dict, result
                     'text': f"**{label_text}:** *{caption_text}*"
                 })
         
-        elif child.tag == 'table-wrap':
-            label = child.find('.//label')
-            if label is not None:
-                label_text = etree.tostring(label, method="text", encoding="unicode").strip()
+        elif tag == 'table-wrap':
+            label = child.xpath('.//*[local-name()="label"]')
+            if label:
+                label_text = etree.tostring(label[0], method="text", encoding="unicode").strip()
                 results.append({
                     'section': section_info['path'],
                     'paragraph': 0,
@@ -134,7 +151,8 @@ def _extract_section_info(section: etree._Element) -> Dict[str, Any]:
     level = 1
     
     while current is not None:
-        title_elem = current.find("title")
+        title_candidates = current.xpath('./*[local-name()="title"]')
+        title_elem = title_candidates[0] if title_candidates else None
         if title_elem is not None:
             title_text = etree.tostring(title_elem, method="text", encoding="unicode").strip()
             if title_text:
@@ -142,15 +160,17 @@ def _extract_section_info(section: etree._Element) -> Dict[str, Any]:
                 levels.insert(0, level)
         
         parent = current.getparent()
-        if parent is not None and parent.tag in ["sec", "abstract"]:
+        if parent is not None and _local_name(parent) in ["sec", "abstract"]:
             current = parent
             level += 1
         else:
             break
     
     if not titles:
-        if section.tag == "abstract":
+        if _tags_equal(section, 'abstract'):
             return {"path": "Abstract"}
+        if _tags_equal(section, 'body'):
+            return {"path": "Body"}
         else:
             return {"path": "Unknown"}
     
@@ -165,9 +185,9 @@ def _extract_section_info(section: etree._Element) -> Dict[str, Any]:
     # "Abstract".
     parent = section.getparent()
     while parent is not None:
-        if parent.tag == "abstract":
+        if _tags_equal(parent, "abstract"):
             # Only prepend for nested sections, not for the abstract element itself
-            if section.tag != "abstract":
+            if not _tags_equal(section, "abstract"):
                 path = f"Abstract; {path}"
             break
         parent = parent.getparent()
@@ -207,3 +227,20 @@ def _extract_paragraph_text(para: etree._Element) -> str:
     text = re.sub(r"\s+([\.,;:?!])", r"\1", text)
 
     return text.strip()
+
+# ---------------------------------------------------------------------------
+# XML namespace helpers (internal use only)
+# ---------------------------------------------------------------------------
+
+
+def _local_name(elem: etree._Element) -> str:
+    """Return the element's tag name without namespace, e.g. '{ns}sec' -> 'sec'."""
+
+    tag = elem.tag  # type: ignore[attr-defined]
+    return tag.split('}', 1)[1] if '}' in tag else tag  # type: ignore[return-value]
+
+
+def _tags_equal(elem: etree._Element, tag_name: str) -> bool:
+    """Case-sensitive check that *elem*'s local tag equals *tag_name*."""
+
+    return _local_name(elem) == tag_name
