@@ -98,6 +98,12 @@ def _process_member(tf: tarfile.TarFile, member: tarfile.TarInfo, output_dir: Pa
         # Skip filtered licences / topics
         if any(l in licence.upper() for l in LICENSE_FILTER):
             return "filtered"
+
+        # Skip non research-article types (e.g. corrections)
+        article_type = (doc.get("article-type") or "").lower()
+        if article_type != "research-article":
+            return "filtered"
+            
         if not _matches_topic(doc):
             return "filtered"
 
