@@ -151,8 +151,18 @@ def _extract_paragraph_text(para: etree._Element) -> str:
     
     text = "".join(text_parts)
     
-    text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'\[[\d\s,-]+\]', '', text)
-    text = re.sub(r'\([\d\s,-]+\)', '', text)
-    
+    # Normalize whitespace
+    text = re.sub(r"\s+", " ", text)
+
+    # Convert purely numeric parenthetical citations to square bracket form.
+    # This turns patterns like "(12)", "(12, 15)" or "(12-15)" into "[12]", "[12, 15]", "[12-15]" respectively.
+    text = re.sub(r"\(\s*([\d\s,-]+)\s*\)", r"[\1]", text)
+
+    # Remove unnecessary spaces directly inside square brackets, e.g. "[ 33]" -> "[33]"
+    text = re.sub(r"\[\s+", "[", text)
+    text = re.sub(r"\s+\]", "]", text)
+
+    # Remove stray whitespace that can appear before punctuation (e.g. "level ." -> "level.")
+    text = re.sub(r"\s+([\.,;:?!])", r"\1", text)
+
     return text.strip()
