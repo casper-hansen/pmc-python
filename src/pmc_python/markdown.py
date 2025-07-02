@@ -1,6 +1,6 @@
 import pandas as pd
 from lxml import etree
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import re
 from .text import to_text
 from .table import to_table
@@ -97,40 +97,96 @@ def _format_metadata_header(metadata: Dict[str, Any]) -> str:
 
 
 def _format_integrated_content(text_data: pd.DataFrame, tables) -> str:
-    """Format text content with integrated tables and figures"""
+    """Format text content with integrated tables and figures.
+
+    The *text_data* frame coming from ``to_text`` has one row per sentence
+    and contains ``section``, ``paragraph`` and ``sentence`` positional
+    markers.  The previous implementation concatenated rows directly which
+    led to paragraph breaks after **every sentence**.  Here we first bundle
+    rows belonging to the same paragraph (identified by the combination of
+    *section* and *paragraph* index) so that we only insert a blank line
+    between paragraphs while fully preserving the original article order.
+    """
     if text_data.empty:
         return ""
-    
-    table_lookup = {}
-    
-    if tables:
+
+    # -----------------------------------------------------------
+    # Build a lookup so that "TABLE_PLACEHOLDER:Table 1" markers can be
+    # replaced later on.  This is unchanged behaviour from the previous
+    # implementation.
+    # -----------------------------------------------------------
+    table_lookup: Dict[str, Any] = {}
+    if tables is not None:
         if isinstance(tables, dict):
             table_lookup = tables
         else:
-            table_lookup = {f"Table {i}": table for i, table in enumerate(tables, 1)}
-    
-    markdown_parts = []
-    current_section = None
-    current_paragraphs = []
-    
+            table_lookup = {f"Table {i}": tbl for i, tbl in enumerate(tables, 1)}
+
+    markdown_parts: List[str] = []
+
+    # -----------------------------------------------------------
+    # Iterate over the dataframe while coalescing sentences that belong to
+    # the same paragraph.  *text_data* is already in document order, so we
+    # can stream over it without additional sorting.
+    # -----------------------------------------------------------
+    current_section: Optional[str] = None
+    current_paragraph_id: Optional[int] = None
+    current_sentences: List[str] = []
+
+    def _flush_paragraphs(section: str, sentences_acc: List[str], out: List[str]):
+        """Helper to emit a completed paragraph list for *section*."""
+        if not sentences_acc:
+            return
+        paragraph_text = " ".join(sentences_acc).strip()
+        if paragraph_text or paragraph_text.startswith("TABLE_PLACEHOLDER:"):
+            # Store paragraphs per section until the section changes – the
+            # final transformation to markdown is done in one go for each
+            # section so that headings are handled only once.
+            out.append(paragraph_text)
+        sentences_acc.clear()
+
+    # A mapping of section -> list[paragraph_str]; we build it on the fly
+    section_to_paragraphs: Dict[str, List[str]] = {}
+
     for _, row in text_data.iterrows():
-        section = row['section']
-        text = row['text']
-        
-        if section != current_section:
-            if current_section is not None and current_paragraphs:
-                section_content = _format_section(current_section, current_paragraphs, table_lookup)
-                markdown_parts.append(section_content)
-            
-            current_section = section
-            current_paragraphs = []
-        
-        current_paragraphs.append(text)
-    
-    if current_section is not None and current_paragraphs:
-        section_content = _format_section(current_section, current_paragraphs, table_lookup)
+        section = row["section"]
+        para_idx = row.get("paragraph", 0)
+        sentence_text = row["text"]
+
+        # -------------------------------------------------------
+        # Detect a change in section or paragraph and flush the
+        # accumulated sentences accordingly.
+        # -------------------------------------------------------
+        if (section != current_section) or (para_idx != current_paragraph_id):
+            if current_section is not None:
+                # Ensure there is a container for the current section.
+                section_to_paragraphs.setdefault(current_section, [])
+                _flush_paragraphs(current_section, current_sentences, section_to_paragraphs[current_section])
+
+            # On section change we also need to reset the paragraph list so
+            # that paragraphs are grouped under their respective section
+            # heading in the original order.
+            if section != current_section:
+                current_section = section
+            current_paragraph_id = para_idx
+
+        # Accumulate sentences for the current paragraph.
+        current_sentences.append(sentence_text)
+
+    # Flush any remaining buffered sentences from the last loop iteration.
+    if current_section is not None:
+        section_to_paragraphs.setdefault(current_section, [])
+        _flush_paragraphs(current_section, current_sentences, section_to_paragraphs[current_section])
+
+    # -----------------------------------------------------------
+    # With paragraphs now grouped by section we can format each section
+    # individually, preserving the original ordering stored in
+    # *section_to_paragraphs*.
+    # -----------------------------------------------------------
+    for section_name, paragraphs in section_to_paragraphs.items():
+        section_content = _format_section(section_name, paragraphs, table_lookup)
         markdown_parts.append(section_content)
-    
+
     return "\n\n".join(markdown_parts)
 
 
