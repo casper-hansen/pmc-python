@@ -6,6 +6,7 @@ from .text import to_text
 from .table import to_table
 from .metadata import to_metadata
 from .reference import to_reference
+import yaml  # type: ignore
 
 
 def to_markdown(doc: etree._Element) -> str:
@@ -52,36 +53,47 @@ def to_markdown(doc: etree._Element) -> str:
 
 
 def _format_metadata_header(metadata: Dict[str, Any]) -> str:
-    """Format metadata as markdown header"""
-    parts = []
-    
-    if 'Title' in metadata and metadata['Title']:
-        parts.append(f"# {metadata['Title']}")
-    
-    if 'Authors' in metadata and metadata['Authors']:
-        authors = metadata['Authors']
-        if isinstance(authors, list):
-            authors_str = ", ".join(authors)
-        else:
-            authors_str = str(authors)
-        parts.append(f"**Authors:** {authors_str}")
-    
-    if 'Journal' in metadata and metadata['Journal']:
-        parts.append(f"**Journal:** {metadata['Journal']}")
-    
-    if 'Year' in metadata and metadata['Year']:
-        parts.append(f"**Year:** {metadata['Year']}")
-    
-    if 'PMCID' in metadata and metadata['PMCID']:
-        parts.append(f"**PMCID:** {metadata['PMCID']}")
-    
-    if 'DOI' in metadata and metadata['DOI']:
-        parts.append(f"**DOI:** {metadata['DOI']}")
-    
-    if 'License' in metadata and metadata['License']:
-        parts.append(f"**License:** {metadata['License']}")
-    
-    return "\n\n".join(parts)
+    """Return YAML front-matter block for the article metadata.
+
+    The block follows the common Markdown convention:
+    --- (YAML) ---
+    Optionally we append the article title as an H1 heading so the document
+    still renders nicely in plain Markdown viewers that ignore YAML metadata.
+    """
+
+    # Map internal metadata keys to YAML keys (lower-case)
+    meta_map = {
+        "Title": "title",
+        "Authors": "authors",
+        "Journal": "journal",
+        "Year": "year",
+        "PMCID": "pmcid",
+        "DOI": "doi",
+        "License": "license",
+    }
+
+    yaml_meta: Dict[str, Any] = {}
+
+    for src_key, yaml_key in meta_map.items():
+        if src_key in metadata and metadata[src_key]:
+            value = metadata[src_key]
+            # Coerce single author string into list for YAML consistency
+            if src_key == "Authors" and not isinstance(value, list):
+                value = [value]
+            yaml_meta[yaml_key] = value
+
+    # Dump YAML without sorting keys and in block style
+    yaml_str = yaml.safe_dump(
+        yaml_meta, sort_keys=False, default_flow_style=False, allow_unicode=True
+    ).strip()
+
+    header_parts = ["---", yaml_str, "---"]
+
+    # Add a visible H1 title for renderers that ignore YAML
+    if "Title" in metadata and metadata["Title"]:
+        header_parts.extend(["", f"# {metadata['Title']}"])
+
+    return "\n".join(header_parts)
 
 
 def _format_integrated_content(text_data: pd.DataFrame, tables) -> str:
