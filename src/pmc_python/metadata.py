@@ -109,13 +109,65 @@ def to_metadata(doc: etree._Element) -> Optional[Dict[str, Any]]:
             if day_elem is not None:
                 metadata['day'] = int(day_elem.text.strip())
     
-    # Extract license information (usually found under <permissions>)
-    license_elem = front.find(".//permissions/license")
-    if license_elem is not None:
-        license_href = license_elem.get(XLINK_NS) or license_elem.get("xlink:href")
-        if license_href:
-            metadata['license_url'] = license_href
-            metadata['license'] = _parse_license_url(license_href)
+    # Constants for additional namespaces that may contain license references
+    ALI_LICENSE_REF = "{http://www.niso.org/schemas/ali/1.0/}license_ref"
+
+    license_url: Optional[str] = None
+
+    # 1) Search any <license> element anywhere in the <front> matter (covers most cases)
+    for lic_elem in front.findall(".//license"):
+        # Direct xlink:href attribute (namespaced or with prefix)
+        license_url = (
+            lic_elem.get(XLINK_NS)
+            or lic_elem.get("xlink:href")
+            or lic_elem.get("href")
+        )
+        if license_url:
+            license_url = license_url.strip()
+            break
+
+        # ali:license_ref element inside <license>
+        lic_ref_elem = lic_elem.find(f".//{ALI_LICENSE_REF}")
+        if lic_ref_elem is not None and lic_ref_elem.text:
+            license_url = lic_ref_elem.text.strip()
+            break
+
+        # <ext-link> as a fall-back holder of the URL
+        ext_link_elem = lic_elem.find(".//ext-link")
+        if ext_link_elem is not None:
+            license_url = (
+                ext_link_elem.get(XLINK_NS)
+                or ext_link_elem.get("xlink:href")
+                or (ext_link_elem.text.strip() if ext_link_elem.text else None)
+            )
+            if license_url and license_url.strip():
+                license_url = license_url.strip()
+                break
+
+    # 2) Search for ali:license_ref elements that live outside a <license> wrapper
+    if not license_url:
+        lic_ref_elem = front.find(f".//{ALI_LICENSE_REF}")
+        if lic_ref_elem is not None and lic_ref_elem.text:
+            license_url = lic_ref_elem.text.strip()
+
+    # 3) Fallback: look for any xlink:href attributes under <permissions> containing a CC/public domain URL
+    if not license_url:
+        try:
+            hrefs = front.xpath(
+                ".//permissions//@xlink:href",
+                namespaces={"xlink": "http://www.w3.org/1999/xlink"},
+            )
+            for href in hrefs:
+                if "creativecommons" in href or "publicdomain" in href:
+                    license_url = href.strip()
+                    break
+        except Exception:
+            # If xpath fails (e.g., no namespace map), silently ignore
+            pass
+
+    if license_url:
+        metadata['license_url'] = license_url
+        metadata['license'] = _parse_license_url(license_url)
 
     journal_meta = front.find(".//journal-meta")
     if journal_meta is not None:

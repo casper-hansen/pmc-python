@@ -93,10 +93,10 @@ def _process_member(tf: tarfile.TarFile, member: tarfile.TarInfo, output_dir: Pa
         doc = etree.fromstring(xml_bytes)
 
         metadata = pmc_python.to_metadata(doc) or {}
-        licence = metadata.get("License", "")
+        license = metadata.get("License", "")
 
         # Skip filtered licences / topics
-        if any(l in licence.upper() for l in LICENSE_FILTER):
+        if not license or any(l in license.upper() for l in LICENSE_FILTER):
             return "filtered"
 
         # Skip non research-article types (e.g. corrections)
