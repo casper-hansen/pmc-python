@@ -3,13 +3,31 @@ import pandas as pd
 from lxml import etree
 from typing import Optional, Dict, Any
 import nltk
+from nltk.tokenize.punkt import PunktSentenceTokenizer
 from .utils import path_string
 
+# Ensure the pretrained English Punkt model is available.
 try:
-    nltk.data.find('tokenizers/punkt_tab')
+    nltk.data.find('tokenizers/punkt')
 except LookupError:
-    nltk.download('punkt_tab', quiet=True)
+    nltk.download('punkt', quiet=True)
 
+# ---------------------------------------------------------------------------
+# Custom sentence tokenizer
+# ---------------------------------------------------------------------------
+# "et al." is extremely common in biomedical and other scientific texts, but
+# the default Punkt parameters tend to treat the period after "al." as a
+# sentence boundary.  We patch the pretrained English model by adding "al" to
+# its abbreviation list.  This prevents unwanted splits inside the phrase
+# "et al." while still allowing the period to end a sentence when there is no
+# following lowercase token (e.g. at the very end of a sentence).
+
+# Load the standard English Punkt model once and modify its parameters.
+_PUNKT = nltk.data.load('tokenizers/punkt/english.pickle')
+_PUNKT._params.abbrev_types.update({'al'})  # handles "et al." correctly
+
+# Expose a simple callable for code readability.
+_SENT_TOKENIZE = _PUNKT.tokenize
 
 def to_text(doc: etree._Element) -> Optional[pd.DataFrame]:
     """
@@ -70,7 +88,7 @@ def _process_section_content(section: etree._Element, section_info: dict, result
             if not para_text.strip():
                 continue
                 
-            sentences = nltk.sent_tokenize(para_text)
+            sentences = _SENT_TOKENIZE(para_text)
             
             for sent_idx, sentence in enumerate(sentences, 1):
                 if sentence.strip():
@@ -158,29 +176,34 @@ def _extract_section_info(section: etree._Element) -> Dict[str, Any]:
 
 
 def _extract_paragraph_text(para: etree._Element) -> str:
-    """Extract clean text from paragraph, handling nested elements"""
-    text_parts = []
-    
-    for elem in para.iter():
-        if elem.text:
-            text_parts.append(elem.text)
-        if elem.tail:
-            text_parts.append(elem.tail)
-    
-    text = "".join(text_parts)
-    
-    # Normalize whitespace
+    """Extract and tidy plain text from a paragraph element."""
+
+    # Use lxml's text serialization to capture all nested text content in the
+    # paragraph while ignoring markup. This approach is both simpler and less
+    # error-prone than manually iterating over every child element.
+    text = etree.tostring(para, method="text", encoding="unicode")
+
+    # Collapse any run of whitespace (spaces, tabs, newlines) down to a single
+    # space so that the downstream sentence tokenizer sees clean text.
     text = re.sub(r"\s+", " ", text)
 
-    # Convert purely numeric parenthetical citations to square bracket form.
-    # This turns patterns like "(12)", "(12, 15)" or "(12-15)" into "[12]", "[12, 15]", "[12-15]" respectively.
+    # Convert purely numeric parenthetical citations to square-bracket form,
+    # e.g. "(12, 15)" -> "[12, 15]". This makes them easier to read in the
+    # generated markdown and avoids false sentence breaks inside parentheses.
     text = re.sub(r"\(\s*([\d\s,-]+)\s*\)", r"[\1]", text)
 
-    # Remove unnecessary spaces directly inside square brackets, e.g. "[ 33]" -> "[33]"
+    # Remove unnecessary spaces directly inside square brackets, e.g. "[ 33]"
+    # -> "[33]".
     text = re.sub(r"\[\s+", "[", text)
     text = re.sub(r"\s+\]", "]", text)
 
-    # Remove stray whitespace that can appear before punctuation (e.g. "level ." -> "level.")
+    # Likewise, remove spaces just inside parentheses so that patterns like
+    # "( Vionnet et al. 1992)" become "(Vionnet et al. 1992)".
+    text = re.sub(r"\(\s+", "(", text)
+    text = re.sub(r"\s+\)", ")", text)
+
+    # Remove stray whitespace that can appear before punctuation (e.g. "level ."
+    # -> "level.").
     text = re.sub(r"\s+([\.,;:?!])", r"\1", text)
 
     return text.strip()
