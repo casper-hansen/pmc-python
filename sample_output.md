@@ -71,7 +71,9 @@ To survive these stressful environments, Y. pestis likely makes appropriate adap
 
 A DNA microarray is able to determine simultaneous changes in all the genes of a cell at the mRNA level [6].
 
-We and others have measured the gene expression profiles of Y. pestis in response to a variety of stimulating conditions (stimulon analysis), including temperature alteration tolerance [7-9], increased osmolarity [10], ion deficiency [11], antibiotic treatment [12,13], oxidative and acidic stresses [14], antibacterial peptide treatment [14] and nutrition limitation.
+We and others have measured the gene expression profiles of Y. pestis in response to a variety of stimulating conditions (stimulon analysis), including temperature alteration tolerance [7-9], increased osmolarity [10], ion deficiency [11], antibiotic treatment [12,13], oxidative and acidic stresses [14], antibacterial peptide treatment
+
+[14] and nutrition limitation.
 
 We also identified the regulons controlled by each of the regulatory proteins, Fur [11], PhoP [15], OmpR, and OxyR, by comparing the gene expression patterns of the mutant transcriptional regulator with that of its parental strain.
 
@@ -263,7 +265,7 @@ Cluster I consisted of more than 70 genes, most of which are functionally relate
 
 The ribosome is the factory of protein synthesis, and it determines the capacity of the cell to synthesize proteins, thus determining the growth rate of the bacteria.
 
-Since most of the members in Cluster I were down-regulated in response to a temperature shift from 26 to 37°C, high osmolarity, Mg 2+ limitation, nutrition deficiency, and antibiotics treatment, Y. pestis appeared to slow its growth rate under these conditions (see Additional File 1).
+Since most of the members in Cluster I were down-regulated in response to a temperature shift from 26 to 37°C, high osmolarity, Mg2+ limitation, nutrition deficiency, and antibiotics treatment, Y. pestis appeared to slow its growth rate under these conditions (see Additional File 1).
 
 Cluster II contains dozens of genes involved in iron/heme assimilation.
 
@@ -373,7 +375,7 @@ It is a part of the E. coli Fnr box (5'-AAWTTGATNWMNATCAAWWWW-3') [45].
 | Cluster III | cysB, ssuEADCB, cysK, YPO3541, YPO1517-YPO1516, YPO1316, YPO1317-YPO1319, fliY, sbp1, tauABCD, YPO0186, YPO2360, YPO3010, cysP, YPO4112, YPO4108, ilvC, YPO2315 and gntT | Fnr-like box: 5' TGAN6TCAA 3' | ssuEADCB, cysK, YPO1517-YPO1516, YPO1317-YPO1319, fliY, sbp1, tauABCD and gntT |
 | Cluster IV | sdhCDAB-sucABCD, nuoA-N, cyoABCDE, purB, pta, kbl-tdh, metG, aceE, cysJIH, acnB, murEFXD, YPO1523, gph, trpS, pepD, accBC, mutS, ppc, cydAB, fadBA, fadL, fumA, mdh, oppABCDF, treBC, manX, napFDABC and frdABCD | Fnr/Crp-like box: 5' TGANNNNNNTCA 3' ArcA-like box:5' GTTAATTAATGT 3' | sdhCDAB-sucABCD, pta, kbl-tdh, gph, pepD, mutS, cydAB, fadBA, fumA, oppABCDF, treBC, manX and frdABCD acnB, pepD, mutS, mdh, oppABCDF, manX and frdABCD |
 
-A box sequence (5'- TGAN6TCA-3') was strictly present in the promoter regions of 14 genes in cluster IV.
+A box sequence (5'-TGAN6TCA-3') was strictly present in the promoter regions of 14 genes in cluster IV.
 
 It is a part of the binding boxes of CRP [43] and Fnr [45].
 
@@ -492,7 +494,7 @@ All the microarray data was deposited in Gene Expression Omnibus (GEO accession 
 
 ## Operon prediction
 
-To measure similarities in gene transcriptional regulation, we calculated the correlation coefficient ( r) of neighboring genes between mRNA transcriptional patterns under multiple environmental conditions.
+To measure similarities in gene transcriptional regulation, we calculated the correlation coefficient (r) of neighboring genes between mRNA transcriptional patterns under multiple environmental conditions.
 
 We then further focused our analysis to those genes across all arrays that were differentially regulated in at least five experiments.
 
@@ -572,9 +574,7 @@ EMSA was performed using the Gel Shift Assay Systems (Promega, Madison, WI).
 
 The DNA was 5'end-labeled using [γ-32P] ATP and T4 polynucleotide kinase.
 
-DNA binding was performed in a 10 μl reaction volume containing: binding buffer [100 μM MnCl2, 1 mM MgCl2, 0.5 mM DTT, 50 mM NaCl, 10 mM Tris-HCl (pH 7.5) and 0.05 mg ml-1 poly-(dI-dC)], labeled DNA (1000–2000 c.p.m.
-
-μl-1), and increasing amounts of His-Fur protein.
+DNA binding was performed in a 10 μl reaction volume containing: binding buffer [100 μM MnCl2, 1 mM MgCl2, 0.5 mM DTT, 50 mM NaCl, 10 mM Tris-HCl (pH 7.5) and 0.05 mg ml-1 poly-(dI-dC)], labeled DNA (1000–2000 c.p.m. μl-1), and increasing amounts of His-Fur protein.
 
 We included two control reactions: one contained the specific DNA competitor (unlabeled promoter DNA), while the other was the nonspecific protein competitor [rabbit anti-F1-protein polyclonal antibody (IgG)].
 
@@ -598,9 +598,7 @@ Additionally, all authors have already read and approved the final manuscript.
 
 We thank Dr. Chen Chen and his co-workers from Chinese Academy of Sciences for their assistance during the course of this work.
 
-This study was funded by the National Natural Science Foundation of China (contract no.
-
-30430620).
+This study was funded by the National Natural Science Foundation of China (contract no. 30430620).
 
 The English writing of the manuscript was polished by International Science Editing, Ireland.
 
