@@ -1,33 +1,31 @@
 import re
+from typing import Optional, Dict, Any, List
+
 import pandas as pd
 from lxml import etree
-from typing import Optional, Dict, Any
-import nltk
-from nltk.tokenize.punkt import PunktSentenceTokenizer
+
+import spacy
+
 from .utils import path_string
 
-# Ensure the pretrained English Punkt model is available.
 try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
+    _NLP = spacy.load(
+        "en_core_web_sm",
+        disable=["ner", "lemmatizer", "tagger", "attribute_ruler"],
+    )
+except OSError as exc:  # pragma: no cover
+    raise ImportError(
+        "spaCy model 'en_core_web_sm' is not installed. "
+        "Install it by running: python -m spacy download en_core_web_sm"
+    ) from exc
 
-# ---------------------------------------------------------------------------
-# Custom sentence tokenizer
-# ---------------------------------------------------------------------------
-# "et al." is extremely common in biomedical and other scientific texts, but
-# the default Punkt parameters tend to treat the period after "al." as a
-# sentence boundary.  We patch the pretrained English model by adding "al" to
-# its abbreviation list.  This prevents unwanted splits inside the phrase
-# "et al." while still allowing the period to end a sentence when there is no
-# following lowercase token (e.g. at the very end of a sentence).
+def _SENT_TOKENIZE(text: str) -> List[str]:
+    """Light wrapper around spaCy to produce a list of sentence strings."""
 
-# Load the standard English Punkt model once and modify its parameters.
-_PUNKT = nltk.data.load('tokenizers/punkt/english.pickle')
-_PUNKT._params.abbrev_types.update({'al'})  # handles "et al." correctly
-
-# Expose a simple callable for code readability.
-_SENT_TOKENIZE = _PUNKT.tokenize
+    if not text:
+        return []
+    doc = _NLP(text)
+    return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
 
 def to_text(doc: etree._Element) -> Optional[pd.DataFrame]:
     """
