@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
@@ -9,7 +10,8 @@ from lxml import etree
 
 
 LICENSE_FILTER = ["BY-ND", "BY ND"]  # Licence substrings to filter
-
+OBESITY_DIABETES_WEIGHT_LOSS_FILTER = True
+_TOPIC_RE = re.compile(r"\b(obesity|weight[\s\-]?loss|diabetes|diabetic)\b", re.I)
 
 # Global TarFile instance for worker processes (set in initializer)
 _TAR: Optional[tarfile.TarFile] = None
@@ -20,6 +22,20 @@ def _init_tar(tar_path: str) -> None:
     global _TAR
     _TAR = tarfile.open(tar_path, "r:gz")
 
+
+def _matches_topic(doc: etree._Element) -> bool:
+    # 1. Article title
+    title = " ".join(doc.xpath(".//article-title//text()"))
+    # 2. Abstract text
+    abstract = " ".join(doc.xpath(".//abstract//text()"))
+    # 3. Author-supplied keywords (if any)
+    keywords = " ".join(doc.xpath(".//kwd-group//kwd//text()"))
+
+    haystack = f"{title} {abstract} {keywords}".lower()
+    if OBESITY_DIABETES_WEIGHT_LOSS_FILTER:
+        return bool(_TOPIC_RE.search(haystack))
+    else:
+        return True
 
 def _process_xml_member(member_name: str, output_dir: Path) -> str:
     """Convert a single PMC XML file to Markdown unless it is CC BY-ND.
@@ -44,6 +60,9 @@ def _process_xml_member(member_name: str, output_dir: Path) -> str:
 
         # Skip files with a filtered licence
         if any(l in licence.upper() for l in LICENSE_FILTER):
+            return "filtered"
+        
+        if not _matches_topic(doc):
             return "filtered"
 
         markdown = pmc_python.to_markdown(doc)
