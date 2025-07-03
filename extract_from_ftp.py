@@ -9,6 +9,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from tqdm import tqdm
 from lxml import etree
+import signal
 
 import pmc_python
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -89,9 +90,13 @@ def _process_xml(xml_bytes: bytes, member_name: str, output_dir_str: str) -> str
 
     Returns one of the status strings: "saved", "filtered", "error".
     """
+    def _timeout_handler(signum, frame):
+        raise TimeoutError()
+
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(30)
     try:
         output_dir = Path(output_dir_str)
-
         doc = etree.fromstring(xml_bytes)
 
         metadata = pmc_python.to_metadata(doc) or {}
@@ -116,8 +121,13 @@ def _process_xml(xml_bytes: bytes, member_name: str, output_dir_str: str) -> str
         with output_path.open("w+", encoding="utf-8") as fh:
             fh.write(markdown)
         return "saved"
+    except TimeoutError:
+        return "error"
     except Exception:
         return "error"
+    finally:
+        # Disable the alarm no matter what
+        signal.alarm(0)
 
 
 def process_tar(buf: BytesIO, output_dir: Path, max_workers: Optional[int] = None) -> None:
@@ -162,7 +172,7 @@ def main() -> None:
     sess = _robust_session()
 
     print("Fetching file list…")
-    tar_files = list_remote_tarfiles(sess)
+    tar_files = list_remote_tarfiles(sess)[4:]
     if not tar_files:
         print("No matching tar files found at remote location.")
         return
