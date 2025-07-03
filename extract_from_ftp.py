@@ -9,10 +9,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from tqdm import tqdm
 from lxml import etree
-import signal
 
 import pmc_python
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError, wait, FIRST_COMPLETED
 
 # Constants ---------------------------------------------------------------
 
@@ -90,11 +89,6 @@ def _process_xml(xml_bytes: bytes, member_name: str, output_dir_str: str) -> str
 
     Returns one of the status strings: "saved", "filtered", "error".
     """
-    def _timeout_handler(signum, frame):
-        raise TimeoutError()
-
-    signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(30)
     try:
         output_dir = Path(output_dir_str)
         doc = etree.fromstring(xml_bytes)
@@ -121,13 +115,8 @@ def _process_xml(xml_bytes: bytes, member_name: str, output_dir_str: str) -> str
         with output_path.open("w+", encoding="utf-8") as fh:
             fh.write(markdown)
         return "saved"
-    except TimeoutError:
-        return "error"
     except Exception:
         return "error"
-    finally:
-        # Disable the alarm no matter what
-        signal.alarm(0)
 
 
 def process_tar(buf: BytesIO, output_dir: Path, max_workers: Optional[int] = None) -> None:
@@ -146,17 +135,42 @@ def process_tar(buf: BytesIO, output_dir: Path, max_workers: Optional[int] = Non
                     executor.submit(_process_xml, xml_bytes, m.name, str(output_dir))
                 )
 
+            # Process futures with a watchdog so that a single misbehaving task
+            # cannot block the entire run.  We allow up to 60 s of silence; any
+            # tasks that are still pending after that will be cancelled and
+            # counted as errors.
+            pending = set(futures)
             with tqdm(total=len(futures), desc="Processing XML", leave=False) as pbar:
-                for fut in as_completed(futures):
-                    status = fut.result()
-                    if status == "saved":
-                        saved += 1
-                    elif status == "filtered":
-                        filtered += 1
-                    else:
-                        errors += 1
-                    pbar.update(1)
-                    pbar.set_postfix(saved=saved, filtered=filtered, errors=errors)
+                while pending:
+                    # Wait until at least one future completes or the timeout expires.
+                    done, pending = wait(pending, timeout=60, return_when=FIRST_COMPLETED)
+
+                    # If the timeout elapsed with *no* future completing, cancel the oldest one.
+                    if not done:
+                        # Cancel all remaining stuck futures to unblock the loop.
+                        for fut in list(pending):
+                            fut.cancel()
+                            errors += 1
+                            pbar.update(1)
+                        break
+
+                    for fut in done:
+                        try:
+                            status = fut.result()
+                        except FuturesTimeoutError:
+                            status = "error"
+                        except Exception:
+                            status = "error"
+
+                        if status == "saved":
+                            saved += 1
+                        elif status == "filtered":
+                            filtered += 1
+                        else:
+                            errors += 1
+
+                        pbar.update(1)
+                        pbar.set_postfix(saved=saved, filtered=filtered, errors=errors)
 
     print(f"Summary => saved: {saved}, filtered: {filtered}, errors: {errors}")
 
@@ -172,7 +186,7 @@ def main() -> None:
     sess = _robust_session()
 
     print("Fetching file list…")
-    tar_files = list_remote_tarfiles(sess)
+    tar_files = list_remote_tarfiles(sess)[12:]
     if not tar_files:
         print("No matching tar files found at remote location.")
         return
