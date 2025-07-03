@@ -172,7 +172,7 @@ def main() -> None:
     sess = _robust_session()
 
     print("Fetching file list…")
-    tar_files = list_remote_tarfiles(sess)[4:]
+    tar_files = list_remote_tarfiles(sess)
     if not tar_files:
         print("No matching tar files found at remote location.")
         return
