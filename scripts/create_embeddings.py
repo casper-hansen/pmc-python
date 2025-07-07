@@ -4,11 +4,13 @@ import asyncio
 import hashlib
 import json
 import os
+from tqdm import tqdm
 from openai import AsyncOpenAI
 from datasets import load_dataset
 from tqdm.asyncio import tqdm_asyncio
 
 MAX_CONCURRENT_REQUESTS = 50
+LOADED_BATCH_SIZE = 1000
 MAX_LENGTH = 32768
 CACHE_PATH = "data/embedding_cache.jsonl"
 cache_write_lock: asyncio.Lock | None = None
@@ -63,17 +65,15 @@ async def embed_text(text: str, sem: asyncio.Semaphore, lock: asyncio.Lock):
 
 
 async def main():
-    # Load dataset (consider streaming for very large datasets)
     ds = load_dataset(
         "casperhansen/pmc-oa-markdown",
         split="train",
         num_proc=8,
     )
-    ds = ds.take(1000)
     ds = ds.filter(
         lambda batch: [len(text) // 4 <= MAX_LENGTH for text in batch["text"]],
         batched=True,
-        desc="Removing samples that are too long",
+        desc="Filtering long samples",
     )
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
@@ -82,12 +82,35 @@ async def main():
     if cache_write_lock is None:
         cache_write_lock = asyncio.Lock()
 
-    # Generate embeddings (cached entries return almost instantly)
-    tasks = [
-        asyncio.create_task(embed_text(item["text"], semaphore, cache_write_lock))
-        for item in ds
-    ]
-    embeddings = await tqdm_asyncio.gather(*tasks)
+    num_rows = len(ds)
+    num_batches = (num_rows + LOADED_BATCH_SIZE - 1) // LOADED_BATCH_SIZE
+
+    embeddings: list[list[float]] = []
+
+    # Outer progress bar for batches.
+    for batch_idx in tqdm(range(num_batches), desc=f"Batches (samples={num_rows})", unit="batch"):
+        start = batch_idx * LOADED_BATCH_SIZE
+        end = min(start + LOADED_BATCH_SIZE, num_rows)
+        batch = ds.select(range(start, end))
+
+        # Spawn embedding tasks for this batch only.
+        tasks = [
+            asyncio.create_task(
+                embed_text(text, semaphore, cache_write_lock)
+            )
+            for text in batch["text"]
+        ]
+
+        # Inner progress bar for the current batch.
+        batch_embeddings = await tqdm_asyncio.gather(
+            *tasks,
+            desc=f"Embeddings (batch {batch_idx + 1}/{num_batches})",
+            leave=False,
+        )
+
+        embeddings.extend(batch_embeddings)
+
+    # Attach embeddings to dataset once everything is complete.
     ds = ds.add_column("embed", embeddings)
 
     print(ds)
