@@ -1,5 +1,7 @@
-# pip install datasets vllm
-# vllm serve Qwen/Qwen3-Embedding-8B --task embed --disable-log-requests --max-num-seqs 256 --max-num-batched-tokens 131072
+# uv venv
+# source .venv/bin/activate
+# uv pip install vllm --pre --extra-index-url https://wheels.vllm.ai/nightly --torch-backend=cu128
+# VLLM_USE_V1=1 vllm serve Qwen/Qwen3-Embedding-8B --task embed --disable-log-requests -q fp8 --max-num-batched-tokens 65536
 import asyncio
 import hashlib
 import json
