@@ -1,5 +1,5 @@
-# pip install vllm datasets
-# vllm serve Qwen/Qwen3-Embedding-8B --task embed --disable-log-requests
+# pip install datasets vllm
+# vllm serve Qwen/Qwen3-Embedding-8B --task embed --disable-log-requests --max-num-seqs 256 --max-num-batched-tokens 131072
 import asyncio
 import hashlib
 import json
@@ -17,7 +17,7 @@ cache_write_lock: asyncio.Lock | None = None
 
 client = AsyncOpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="",
+    api_key="test-key",
 )
 
 cache: dict[str, list[float]] = {}
