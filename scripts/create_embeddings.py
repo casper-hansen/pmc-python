@@ -1,7 +1,7 @@
 # uv venv
 # source .venv/bin/activate
 # uv pip install vllm --pre --extra-index-url https://wheels.vllm.ai/nightly --torch-backend=cu128
-# VLLM_USE_V1=1 vllm serve Qwen/Qwen3-Embedding-8B --task embed --disable-log-requests -q fp8 --max-num-batched-tokens 65536
+# VLLM_USE_V1=1 vllm serve Qwen/Qwen3-Embedding-4B --task embed --disable-log-requests -q fp8 --max-num-batched-tokens 65536
 import asyncio
 import hashlib
 import json
@@ -10,12 +10,14 @@ from tqdm import tqdm
 from openai import AsyncOpenAI
 from datasets import load_dataset
 from tqdm.asyncio import tqdm_asyncio
+from transformers import AutoTokenizer
 
-MAX_CONCURRENT_REQUESTS = 50
+MAX_CONCURRENT_REQUESTS = 200
 LOADED_BATCH_SIZE = 1000
 MAX_LENGTH = 32768
 CACHE_PATH = "data/embedding_cache.jsonl"
-cache_write_lock: asyncio.Lock | None = None
+EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-4B"
+CACHE_WRITE_LOCK = asyncio.Lock()
 
 client = AsyncOpenAI(
     base_url="http://localhost:8000/v1",
@@ -52,7 +54,7 @@ async def embed_text(text: str, sem: asyncio.Semaphore, lock: asyncio.Lock):
     async with sem:
         response = await client.embeddings.create(
             input=[text],
-            model="Qwen/Qwen3-Embedding-8B",
+            model=EMBEDDING_MODEL,
         )
         embedding = response.data[0].embedding
 
@@ -72,17 +74,22 @@ async def main():
         split="train",
         num_proc=8,
     )
+    tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_MODEL, trust_remote_code=True)
     ds = ds.filter(
-        lambda batch: [len(text) // 4 <= MAX_LENGTH for text in batch["text"]],
+        lambda batch: [
+            n_tokens <= MAX_LENGTH
+            for n_tokens in tokenizer(
+                batch["text"],
+                add_special_tokens=False,
+                return_length=True,
+            )["length"]
+        ],
         batched=True,
         desc="Filtering long samples",
+        num_proc=16,
     )
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-
-    global cache_write_lock
-    if cache_write_lock is None:
-        cache_write_lock = asyncio.Lock()
 
     num_rows = len(ds)
     num_batches = (num_rows + LOADED_BATCH_SIZE - 1) // LOADED_BATCH_SIZE
@@ -98,7 +105,7 @@ async def main():
         # Spawn embedding tasks for this batch only.
         tasks = [
             asyncio.create_task(
-                embed_text(text, semaphore, cache_write_lock)
+                embed_text(text, semaphore, CACHE_WRITE_LOCK)
             )
             for text in batch["text"]
         ]
