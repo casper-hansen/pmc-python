@@ -8,7 +8,7 @@ import json
 import os
 from tqdm import tqdm
 from openai import AsyncOpenAI
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
 
@@ -124,6 +124,11 @@ async def main():
 
     print(ds)
     print("Embeddings done!")
+
+    # Push the processed dataset to the Hugging Face Hub as the "train" split
+    dataset_dict = DatasetDict({"train": ds})
+    # Replace the repo_id below with your own namespace or desired repo
+    dataset_dict.push_to_hub("casperhansen/pmc-oa-markdown-embeddings")
 
 
 if __name__ == "__main__":
