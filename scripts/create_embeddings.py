@@ -1,7 +1,7 @@
 # uv venv
 # source .venv/bin/activate
 # uv pip install vllm --pre --extra-index-url https://wheels.vllm.ai/nightly --torch-backend=cu128
-# VLLM_USE_V1=1 vllm serve Qwen/Qwen3-Embedding-4B --task embed --disable-log-requests -q fp8 --max-num-batched-tokens 65536
+# VLLM_USE_V1=1 vllm serve Qwen/Qwen3-Embedding-4B --task embed --disable-log-requests -q fp8 --max-num-batched-tokens 65536 --data-parallel-size $(nvidia-smi -L | wc -l)
 import asyncio
 import hashlib
 import json
@@ -86,7 +86,7 @@ async def main():
         ],
         batched=True,
         desc="Filtering long samples",
-        num_proc=16,
+        num_proc=64,
     )
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
