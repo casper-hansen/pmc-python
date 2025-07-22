@@ -19,7 +19,10 @@ TEXT_COL, EMBED_COL = "text", "embed"
 
 DEDUP_THRESHOLD = 0.90     # SemHash cut-off
 K = 5                      # seed + 4 neighbours
-TAU = 0.70                 # min cosine sim inside a clique
+# 0.70 keeps ~10.15% of data
+# 0.75 keeps ~2.30% of data
+# 0.80 keeps ~0.15% of data
+TAU = 0.75                 # min cosine sim inside a clique
 BATCH_Q = 10_000           # ANN query batch size
 # ----------------------------------------------------------------------
 
