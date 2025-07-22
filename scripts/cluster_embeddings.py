@@ -57,27 +57,36 @@ for s in tqdm(range(0, n, BATCH_Q), desc="k-NN search"):
 
 used, clusters = np.zeros(n, bool), []               # bookkeeping
 
+def clique_ok_and_mean(vecs: np.ndarray, tau: float):
+    """
+    Return (is_clique, mean_pairwise_similarity).
 
-def all_pairs_above_threshold(vecs, tau):
-    """True if every off-diagonal pair meets similarity ≥ tau."""
-    M = vecs @ vecs.T
-    return np.all(M[~np.eye(len(vecs), dtype=bool)] >= tau)
+    We build the full similarity matrix *once* and reuse it for both the
+    ≥tau test and the mean computation, so there's no extra work.
+    """
+    S = vecs @ vecs.T                                            # (k,k)
+    off_diag = S[np.triu_indices(len(vecs), k=1)]                # k·(k-1)/2
+    return np.all(off_diag >= tau), float(off_diag.mean())
 
 
-for seed in np.argsort(-D[:, 1]):            # strong 1-NN first
+used, clusters, avg_sims = np.zeros(n, bool), [], []
+
+for seed in np.argsort(-D[:, 1]):                               # strong 1-NN first
     if used[seed]:
         continue
 
     neigh = I[seed, 1 : K + 1]
 
-    if (D[seed, 1 : K + 1] < TAU).any():     # seed must like all 4
+    if (D[seed, 1 : K + 1] < TAU).any():                        # seed must like all 4
         continue
-    if used[neigh].any():                    # no point already clustered
+    if used[neigh].any():
         continue
 
     cand = np.concatenate(([seed], neigh))
-    if all_pairs_above_threshold(emb[cand], TAU):
+    ok, mu = clique_ok_and_mean(emb[cand], TAU)
+    if ok:
         clusters.append(cand.tolist())
+        avg_sims.append(mu)
         used[cand] = True
 
 print(f"Clusters kept: {len(clusters):,}")
@@ -88,11 +97,16 @@ cluster_embeds = [[ds[EMBED_COL][i] for i in c] for c in clusters]
 
 features = Features({
     "texts" : Sequence(Value("string")),
-    "embeds": Sequence(Sequence(Value("float32")))
+    "embeds": Sequence(Sequence(Value("float32"))),
+    "avg_similarity": Value("float32"),
 })
 
 ds_clusters = Dataset.from_dict(
-    {"texts": cluster_texts, "embeds": cluster_embeds},
+    {
+        "texts"         : cluster_texts,
+        "embeds"        : cluster_embeds,
+        "avg_similarity": avg_sims,
+    },
     features=features
 )
 
