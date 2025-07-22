@@ -114,5 +114,5 @@ ds_clusters = Dataset.from_dict(
 )
 
 DatasetDict({"train": ds_clusters}).push_to_hub(
-    "casperhansen/pmc-oa-markdown-clustering-test"
+    "casperhansen/pmc-oa-markdown-clustering"
 )
