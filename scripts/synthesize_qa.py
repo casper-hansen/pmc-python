@@ -242,8 +242,24 @@ async def main():
         )
         responses.extend(batch_responses)
     
-    ds = ds.add_column("question", [r.qa.question for r in responses if r.qa])
-    ds = ds.add_column("answer", [r.qa.answer for r in responses if r.qa])
+    # Collect indices that have both qa and rubric
+    keep_indices = [
+        idx
+        for idx, r in enumerate(responses)
+        if r.qa is not None and r.rubric is not None
+    ]
+
+    ds = ds.select(keep_indices)
+
+    ds = ds.add_column(
+        "question",
+        [responses[idx].qa.question for idx in keep_indices]
+    )
+    ds = ds.add_column(
+        "answer",
+        [responses[idx].qa.answer for idx in keep_indices]
+    )
+
     ds = ds.remove_columns(["embeds", "avg_similarity"])
     print(ds)
     print("Completions done!")
