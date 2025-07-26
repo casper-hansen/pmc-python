@@ -114,7 +114,7 @@ if os.path.exists(CACHE_PATH):
         for line in fh:
             try:
                 record = json.loads(line)
-                cache[record["hash"]] = ExtractedQuestionAnswer(**record["response"])
+                cache[record["hash"]] = CacheRecord(**record["response"])
             except json.JSONDecodeError:
                 # Skip malformed lines (e.g., partial writes)
                 continue
@@ -162,7 +162,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
                     ),
                 }],
                 model=MODEL,
-                max_completion_tokens=1024,
+                max_completion_tokens=4096,
                 response_format=RubricFilter,
             )
             rubric: RubricFilter = rubric_resp.choices[0].message.parsed
