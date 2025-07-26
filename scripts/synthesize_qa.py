@@ -12,10 +12,11 @@ from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
 
-MAX_CONCURRENT_REQUESTS = 1
+MAX_CONCURRENT_REQUESTS = 10
 LOADED_BATCH_SIZE = 1000
-MAX_COMPLETION_LENGTH = 8192
-MAX_SAMPLE_LENGTH = 262144 - MAX_COMPLETION_LENGTH
+SYNTH_MAX_LENGTH = 32768
+RUBRIC_MAX_LENGTH = 16384
+MAX_SAMPLE_LENGTH = 262144 - SYNTH_MAX_LENGTH - RUBRIC_MAX_LENGTH
 CACHE_PATH = "data/qa_cache.jsonl"
 MODEL = "Qwen/Qwen3-235B-A22B-Thinking-2507"
 CACHE_WRITE_LOCK = asyncio.Lock()
@@ -132,12 +133,9 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
 
     # Reuse from cache if we already have it.
     if key in cache:
-        cached: CacheRecord = cache[key]
-        return cached
+        return cache[key]
 
     # Get chain of model completions
-    qa = None
-    rubric = None
     async with sem:
         try:
             qa_resp = await client.chat.completions.parse(
@@ -146,10 +144,13 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
                     "content": SYNTH_PROMPT.format(texts=_join(texts)),
                 }],
                 model=MODEL,
-                max_completion_tokens=4096,
+                max_completion_tokens=SYNTH_MAX_LENGTH,
                 response_format=ExtractedQuestionAnswer,
             )
             qa: ExtractedQuestionAnswer = qa_resp.choices[0].message.parsed
+
+            if qa is None:
+                return CacheRecord(qa=None, rubric=None)
 
             rubric_resp = await client.chat.completions.parse(
                 messages=[{
@@ -161,14 +162,19 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
                     ),
                 }],
                 model=MODEL,
-                max_completion_tokens=4096,
+                max_completion_tokens=RUBRIC_MAX_LENGTH,
                 response_format=RubricFilter,
             )
             rubric: RubricFilter = rubric_resp.choices[0].message.parsed
+
+            if rubric is None:
+                return CacheRecord(qa=None, rubric=None)
         except BadRequestError as ex:
             print("RUBRIC error:", ex)
+            return CacheRecord(qa=None, rubric=None)
         except Exception as ex:
             print("Error", ex)
+            return CacheRecord(qa=None, rubric=None)
     
     record = CacheRecord(qa=qa, rubric=rubric)
 
@@ -195,7 +201,7 @@ async def main():
         "casperhansen/pmc-oa-markdown-clustering",
         split="train",
         num_proc=8,
-    ).take(1)
+    ).take(20)
     tokenizer = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
     ds = ds.filter(
         lambda batch: [
