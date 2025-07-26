@@ -15,10 +15,9 @@ from transformers import AutoTokenizer
 MAX_CONCURRENT_REQUESTS = 1
 LOADED_BATCH_SIZE = 1000
 MAX_COMPLETION_LENGTH = 8192
-MAX_SAMPLE_LENGTH = 131072 - MAX_COMPLETION_LENGTH
+MAX_SAMPLE_LENGTH = 262144 - MAX_COMPLETION_LENGTH
 CACHE_PATH = "data/qa_cache.jsonl"
-MODEL = "qwen/qwen3-235b-a22b-07-25:free"
-TOKENIZER = "Qwen/Qwen3-235B-A22B-Instruct-2507"
+MODEL = "Qwen/Qwen3-235B-A22B-Thinking-2507"
 CACHE_WRITE_LOCK = asyncio.Lock()
 
 SYNTH_PROMPT = """\
@@ -197,7 +196,7 @@ async def main():
         split="train",
         num_proc=8,
     ).take(1)
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
     ds = ds.filter(
         lambda batch: [
             n_tokens + 20 <= MAX_SAMPLE_LENGTH
