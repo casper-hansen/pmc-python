@@ -107,7 +107,7 @@ client = AsyncOpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "test-key"),
 )
 
-cache: dict[str, list[float]] = {}
+cache: dict[str, CacheRecord] = {}
 
 if os.path.exists(CACHE_PATH):
     with open(CACHE_PATH, "r") as fh:
