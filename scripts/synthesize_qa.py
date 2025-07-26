@@ -128,7 +128,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
     immediately so progress persists across crashes/restarts.
     """
     key = hashlib.md5(
-        json.dumps(texts, ensure_ascii=False).encode("utf-8")
+        (json.dumps(texts, ensure_ascii=False) + SYNTH_PROMPT + RUBRIC_PROMPT).encode("utf-8")
     ).hexdigest()
 
     # Reuse from cache if we already have it.
@@ -168,6 +168,8 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
             rubric: RubricFilter = rubric_resp.choices[0].message.parsed
         except BadRequestError as ex:
             print("RUBRIC error:", ex)
+        except Exception as ex:
+            print("Error", ex)
     
     record = CacheRecord(qa=qa, rubric=rubric)
 
