@@ -202,7 +202,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
 
 
 def _join(texts):
-    return "\n\n".join(f"Article {i+1}:\n\n{text}" for i, text in enumerate(texts))
+    return "\n\n".join(f"# Article {i+1}:\n\n{text}" for i, text in enumerate(texts))
 
 
 async def main():
