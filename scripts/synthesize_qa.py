@@ -156,7 +156,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
                 max_completion_tokens=SYNTH_MAX_LENGTH,
                 response_format=ExtractedQuestionAnswer,
             )
-            qa: ExtractedQuestionAnswer = qa_resp.choices[0].message.parsed
+            qa = qa_resp.choices[0].message.parsed
 
             if qa is None:
                 return CacheRecord(qa=None, rubric=None)
@@ -174,7 +174,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
                 max_completion_tokens=RUBRIC_MAX_LENGTH,
                 response_format=RubricFilter,
             )
-            rubric: RubricFilter = rubric_resp.choices[0].message.parsed
+            rubric = rubric_resp.choices[0].message.parsed
 
             if rubric is None:
                 return CacheRecord(qa=None, rubric=None)
