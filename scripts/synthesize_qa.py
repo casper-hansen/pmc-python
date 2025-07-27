@@ -63,14 +63,14 @@ Generate exactly one such question-answer pair.
 {texts}
 """
 
-RUBRIC_PROMPT = """
+RUBRIC_PROMPT = """\
 Below are 5 different metrics that I want you to judge given a triplet of [question], [answer], [context].
 
 Reasoning: Explain why metric scored between 0 to 5. Do not comment on any background to the problem, do not attempt to solve the problem, and do not argue for any answer different than the provided answer.
 
 Metrics:
 - Difficulty (high school | graduate | phd): cognitive depth required to understand and address the [question].
-- Askability (0-5): biological plausibility and naturalness—would a domain expert actually pose this [question]?
+- Askability (0-5):  biological soundness and contextual fit—are the concepts plausibly linked within current biomedical knowledge and do they arise naturally from the provided [context]?
 - Synthesizability (0-5): extent to which the [answer] must integrate information from multiple full-length biomedical sources in [context].
 - Abstractiveness (0-5): degree of conceptual abstraction beyond the literal [context]; 0 = verbatim extraction.
 - Conflict Synthesis (0-5): presence of contradictory evidence demanding nuanced reconciliation across [context].
