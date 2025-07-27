@@ -1,3 +1,12 @@
+"""
+In this script, I perform synthetic data generation and extensive filtering.
+
+3 modes of filtering:
+1. Correctness: Answers correctly with context? Answers incorrectly without context?
+2. Diversity: Deduplicate too similar questions and answers
+3. Quality: Scores well on rubric
+"""
+
 # uv venv
 # source .venv/bin/activate
 import asyncio
@@ -264,8 +273,9 @@ async def main():
         "answer",
         [responses[idx].qa.answer for idx in keep_indices]
     )
-
     ds = ds.remove_columns(["embeds", "avg_similarity"])
+
+    # TODO: semhash deduplication    
     print(ds)
     print("Completions done!")
 
