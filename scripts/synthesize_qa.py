@@ -25,9 +25,9 @@ MAX_CONCURRENT_REQUESTS = 10
 LOADED_BATCH_SIZE = 1000
 SYNTH_MAX_LENGTH = 32768
 RUBRIC_MAX_LENGTH = 16384
-MAX_SAMPLE_LENGTH = 262144 - SYNTH_MAX_LENGTH - RUBRIC_MAX_LENGTH
+MAX_SAMPLE_LENGTH = 163840 - SYNTH_MAX_LENGTH - RUBRIC_MAX_LENGTH
 CACHE_PATH = "data/qa_cache.jsonl"
-MODEL = "Qwen/Qwen3-235B-A22B-Thinking-2507"
+MODEL = "deepseek-ai/DeepSeek-R1-0528"
 CACHE_WRITE_LOCK = asyncio.Lock()
 
 SYNTH_PROMPT = """\
@@ -300,7 +300,7 @@ async def main():
         "casperhansen/pmc-oa-markdown-clustering",
         split="train",
         num_proc=8,
-    ).take(1)
+    ).take(20)
     tokenizer = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
     ds = ds.filter(
         lambda batch: [
