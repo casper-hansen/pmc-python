@@ -84,6 +84,40 @@ Metrics:
 {context_text}
 """
 
+ANSWER_PROMPT = """\
+You are a biomedical expert. Below, You must attempt to answer the question below correctly.
+
+You will not be rewarded for format, only correctness.
+You will receive $10000 if you answer the question correctly.
+
+Question: {question}
+"""
+
+ANSWER_PROMPT_WITH_CONTEXT = ANSWER_PROMPT + """
+## Context
+
+{texts}
+"""
+
+JUDGE_PROMPT = """\
+Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
+
+[question]: {question}
+
+[response]: {response}
+
+Your judgement must be in the format and criteria specified below:
+
+extracted_final_answer: The final exact answer extracted from the [response]. Put the extracted answer as 'None' if there is no exact, final answer to extract from the response.
+
+[correct_answer]: {correct_answer}
+
+reasoning: Explain why the extracted_final_answer is correct or incorrect based on [correct_answer], focusing only on if there are meaningful differences between [correct_answer] and the extracted_final_answer. Do not comment on any background to the problem, do not attempt to solve the problem, do not argue for any answer different than [correct_answer], focus only on whether the answers match.
+
+correct: Answer 'yes' if extracted_final_answer matches the [correct_answer] given above, or is within a small margin of error for numerical problems. Answer 'no' otherwise, i.e. if there if there is any inconsistency, ambiguity, non-equivalency, or if the extracted answer is incorrect.
+"""
+
+
 class ExtractedQuestionAnswer(BaseModel):
     question: str
     answer: str
@@ -110,6 +144,8 @@ class JudgeTripletFilter(BaseModel):
 class CacheRecord(BaseModel):
     qa: ExtractedQuestionAnswer | None
     rubric: RubricFilter | None
+    judge_with_context: JudgeTripletFilter | None
+    judge_without_context: JudgeTripletFilter | None
 
 client = AsyncOpenAI(
     base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:8000/v1"),
@@ -137,7 +173,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
     immediately so progress persists across crashes/restarts.
     """
     key = hashlib.md5(
-        (json.dumps(texts, ensure_ascii=False) + SYNTH_PROMPT + RUBRIC_PROMPT).encode("utf-8")
+        (json.dumps(texts, ensure_ascii=False) + SYNTH_PROMPT + RUBRIC_PROMPT + ANSWER_PROMPT + ANSWER_PROMPT_WITH_CONTEXT).encode("utf-8")
     ).hexdigest()
 
     # Reuse from cache if we already have it.
@@ -149,7 +185,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
         try:
             qa_resp = await client.chat.completions.parse(
                 messages=[{
-                    "role": "system",
+                    "role": "user",
                     "content": SYNTH_PROMPT.format(texts=_join(texts)),
                 }],
                 model=MODEL,
@@ -159,11 +195,11 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
             qa = qa_resp.choices[0].message.parsed
 
             if qa is None:
-                return CacheRecord(qa=None, rubric=None)
+                return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
 
             rubric_resp = await client.chat.completions.parse(
                 messages=[{
-                    "role": "system",
+                    "role": "user",
                     "content": RUBRIC_PROMPT.format(
                         question=qa.question,
                         answer=qa.answer,
@@ -177,15 +213,69 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
             rubric = rubric_resp.choices[0].message.parsed
 
             if rubric is None:
-                return CacheRecord(qa=None, rubric=None)
+                return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+
+            response_no_context = await client.chat.completions.create(
+                messages=[{
+                    "role": "user",
+                    "content": ANSWER_PROMPT.format(question=qa.question),
+                }],
+                model=MODEL,
+            )
+
+            judge_resp = await client.chat.completions.parse(
+                messages=[{
+                    "role": "user",
+                    "content": JUDGE_PROMPT.format(
+                        question=qa.question,
+                        response=response_no_context.choices[0].message.content,
+                        correct_answer=qa.answer,
+                    ),
+                }],
+                model=MODEL,
+                max_completion_tokens=32768,
+                response_format=JudgeTripletFilter,
+            )
+            judgement = judge_resp.choices[0].message.parsed
+            if judgement is None:
+                return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+
+            response_with_context = await client.chat.completions.create(
+                messages=[{
+                    "role": "user",
+                    "content": ANSWER_PROMPT_WITH_CONTEXT.format(
+                        question=qa.question,
+                        texts=_join(texts),
+                    ),
+                }],
+                model=MODEL,
+            )
+
+            judge_resp_context = await client.chat.completions.parse(
+                messages=[{
+                    "role": "user",
+                    "content": JUDGE_PROMPT.format(
+                        question=qa.question,
+                        response=response_with_context.choices[0].message.content,
+                        correct_answer=qa.answer,
+                    ),
+                }],
+                model=MODEL,
+                max_completion_tokens=32768,
+                response_format=JudgeTripletFilter,
+            )
+            judgement_context = judge_resp_context.choices[0].message.parsed
+            if judgement_context is None:
+                return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+            
         except BadRequestError as ex:
             print("RUBRIC error:", ex)
-            return CacheRecord(qa=None, rubric=None)
+            return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
         except Exception as ex:
             print("Error", ex)
-            return CacheRecord(qa=None, rubric=None)
+            return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
     
-    record = CacheRecord(qa=qa, rubric=rubric)
+    record = CacheRecord(qa=qa, rubric=rubric, judge_with_context=judgement, judge_without_context=judgement_context)
 
     async with lock:
         cache[key] = record
@@ -210,7 +300,7 @@ async def main():
         "casperhansen/pmc-oa-markdown-clustering",
         split="train",
         num_proc=8,
-    ).take(20)
+    ).take(1)
     tokenizer = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
     ds = ds.filter(
         lambda batch: [
