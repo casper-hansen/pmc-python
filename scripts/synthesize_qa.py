@@ -123,16 +123,13 @@ class ExtractedQuestionAnswer(BaseModel):
     answer: str
     strict: Literal[True]
 
-class MetricScore(BaseModel):
-    reasoning: str
-    score: int = Field(ge=0, le=5)
 
 class RubricFilter(BaseModel):
     difficulty: Literal["high school", "graduate", "phd"]
-    askability: MetricScore
-    synthesizability: MetricScore
-    abstractiveness: MetricScore
-    conflict_synthesis: MetricScore
+    askability: int = Field(ge=0, le=5)
+    synthesizability: int = Field(ge=0, le=5)
+    abstractiveness: int = Field(ge=0, le=5)
+    conflict_synthesis: int = Field(ge=0, le=5)
     strict: Literal[True]
 
 class JudgeTripletFilter(BaseModel):
