@@ -13,10 +13,11 @@ import asyncio
 import hashlib
 import json
 import os
+import random
 from tqdm import tqdm
-from typing import List, Dict, Literal
+from typing import List, Dict, Literal, Callable, Awaitable
 from pydantic import BaseModel, Field
-from openai import AsyncOpenAI, BadRequestError
+from openai import AsyncOpenAI, BadRequestError, RateLimitError
 from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
@@ -173,6 +174,30 @@ if os.path.exists(CACHE_PATH):
     print(f"Loaded {len(cache)} cached completions from {CACHE_PATH}.")
 
 
+async def async_backoff(
+    func: Callable[..., Awaitable],
+    *args,
+    max_retries: int = 6,
+    initial_delay: float = 10.0,
+    backoff_factor: float = 2.0,
+    jitter: float = 0.2,
+    **kwargs,
+):
+    delay = initial_delay
+    for attempt in range(max_retries):
+        try:
+            return await func(*args, **kwargs)
+        except RateLimitError as err:
+            if attempt == max_retries - 1:
+                raise
+            sleep_for = delay + random.uniform(0, delay * jitter)
+            print(
+                f"[Rate-limit]: {attempt+1}/{max_retries} "
+                f"in {sleep_for:.1f}s ({err.message})"
+            )
+            await asyncio.sleep(sleep_for)
+            delay *= backoff_factor
+
 async def create_completion(
     texts: List[str], sem: asyncio.Semaphore, lock: asyncio.Lock
 ) -> CacheRecord:
@@ -198,7 +223,8 @@ async def create_completion(
     # Get chain of model completions
     async with sem:
         try:
-            qa_resp = await client.chat.completions.parse(
+            qa_resp = await async_backoff(
+                client.chat.completions.parse,
                 messages=[
                     {
                         "role": "user",
@@ -214,7 +240,8 @@ async def create_completion(
             if qa is None:
                 return EMPTY
 
-            rubric_resp = await client.chat.completions.parse(
+            rubric_resp = await async_backoff(
+                client.chat.completions.parse,
                 messages=[
                     {
                         "role": "user",
@@ -234,7 +261,8 @@ async def create_completion(
             if rubric is None:
                 return EMPTY
 
-            response_no_context = await client.chat.completions.create(
+            response_no_context = await async_backoff(
+                client.chat.completions.create,
                 messages=[
                     {
                         "role": "user",
@@ -244,7 +272,8 @@ async def create_completion(
                 model=MODEL,
             )
 
-            judge_resp = await client.chat.completions.parse(
+            judge_resp = await async_backoff(
+                client.chat.completions.parse,
                 messages=[
                     {
                         "role": "user",
@@ -263,7 +292,8 @@ async def create_completion(
             if judgement is None:
                 return EMPTY
 
-            response_with_context = await client.chat.completions.create(
+            response_with_context = await async_backoff(
+                client.chat.completions.create,
                 messages=[
                     {
                         "role": "user",
@@ -276,7 +306,8 @@ async def create_completion(
                 model=MODEL,
             )
 
-            judge_resp_context = await client.chat.completions.parse(
+            judge_resp_context = await async_backoff(
+                client.chat.completions.parse,
                 messages=[
                     {
                         "role": "user",
@@ -299,7 +330,9 @@ async def create_completion(
             print("RUBRIC error:", ex)
             return EMPTY
         except Exception as ex:
+            import traceback
             print("Error", ex)
+            traceback.print_exc()
             return EMPTY
 
     record = CacheRecord(
