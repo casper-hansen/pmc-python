@@ -15,9 +15,10 @@ import json
 import os
 import random
 from tqdm import tqdm
-from typing import List, Dict, Literal, Callable, Awaitable
+from typing import List, Dict, Literal, Callable, Awaitable, Union
 from pydantic import BaseModel, Field, StringConstraints
 from openai import AsyncOpenAI, BadRequestError, RateLimitError
+from openai.types.chat import ParsedChatCompletion, ChatCompletion
 from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
@@ -179,7 +180,7 @@ async def async_backoff(
     backoff_factor: float = 2.0,
     jitter: float = 0.2,
     **kwargs,
-):
+) -> Union[ParsedChatCompletion, ChatCompletion]:
     delay = initial_delay
     for attempt in range(max_retries):
         try:
