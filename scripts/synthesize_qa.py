@@ -16,7 +16,7 @@ import os
 import random
 from tqdm import tqdm
 from typing import List, Dict, Literal, Callable, Awaitable
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from openai import AsyncOpenAI, BadRequestError, RateLimitError
 from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
@@ -88,9 +88,6 @@ Metrics:
 ANSWER_PROMPT = """\
 You are a biomedical expert. Below, You must attempt to answer the question below correctly.
 
-You will not be rewarded for format, only correctness.
-You will receive $10000 if you answer the question correctly.
-
 Question: {question}
 """
 
@@ -123,8 +120,8 @@ correct: Answer 'yes' if extracted_final_answer matches the [correct_answer] giv
 
 
 class ExtractedQuestionAnswer(BaseModel):
-    question: str
-    answer: str
+    question: str = StringConstraints(min_length=1)
+    answer: str = StringConstraints(min_length=1)
     strict: Literal[True]
 
 
@@ -138,8 +135,8 @@ class RubricFilter(BaseModel):
 
 
 class JudgeTripletFilter(BaseModel):
-    extracted_final_answer: str
-    reasoning: str
+    extracted_final_answer: str = StringConstraints(min_length=1)
+    reasoning: str = StringConstraints(min_length=1)
     correct: Literal["yes", "no"]
     strict: Literal[True]
 
@@ -331,15 +328,15 @@ async def create_completion(
             return EMPTY
         except Exception as ex:
             import traceback
-            print("Error", ex)
             traceback.print_exc()
-            return EMPTY
+            print("Exiting process due to unknown error...")
+            exit(0)
 
     record = CacheRecord(
         qa=qa,
         rubric=rubric,
-        judge_with_context=judgement,
-        judge_without_context=judgement_context,
+        judge_with_context=judgement_context,
+        judge_without_context=judgement,
     )
 
     async with lock:
