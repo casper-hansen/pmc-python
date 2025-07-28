@@ -144,6 +144,8 @@ class CacheRecord(BaseModel):
     judge_with_context: JudgeTripletFilter | None
     judge_without_context: JudgeTripletFilter | None
 
+EMPTY = CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+
 client = AsyncOpenAI(
     base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:8000/v1"),
     api_key=os.getenv("OPENAI_API_KEY", "test-key"),
@@ -192,7 +194,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
             qa = qa_resp.choices[0].message.parsed
 
             if qa is None:
-                return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+                return EMPTY
 
             rubric_resp = await client.chat.completions.parse(
                 messages=[{
@@ -210,7 +212,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
             rubric = rubric_resp.choices[0].message.parsed
 
             if rubric is None:
-                return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+                return EMPTY
 
             response_no_context = await client.chat.completions.create(
                 messages=[{
@@ -235,7 +237,7 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
             )
             judgement = judge_resp.choices[0].message.parsed
             if judgement is None:
-                return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+                return EMPTY
 
             response_with_context = await client.chat.completions.create(
                 messages=[{
@@ -263,14 +265,14 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
             )
             judgement_context = judge_resp_context.choices[0].message.parsed
             if judgement_context is None:
-                return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+                return EMPTY
             
         except BadRequestError as ex:
             print("RUBRIC error:", ex)
-            return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+            return EMPTY
         except Exception as ex:
             print("Error", ex)
-            return CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+            return EMPTY
     
     record = CacheRecord(qa=qa, rubric=rubric, judge_with_context=judgement, judge_without_context=judgement_context)
 
