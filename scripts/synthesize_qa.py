@@ -93,11 +93,14 @@ You will receive $10000 if you answer the question correctly.
 Question: {question}
 """
 
-ANSWER_PROMPT_WITH_CONTEXT = ANSWER_PROMPT + """
+ANSWER_PROMPT_WITH_CONTEXT = (
+    ANSWER_PROMPT
+    + """
 ## Context
 
 {texts}
 """
+)
 
 JUDGE_PROMPT = """\
 Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
@@ -132,11 +135,13 @@ class RubricFilter(BaseModel):
     conflict_synthesis: int = Field(ge=0, le=5)
     strict: Literal[True]
 
+
 class JudgeTripletFilter(BaseModel):
     extracted_final_answer: str
     reasoning: str
     correct: Literal["yes", "no"]
     strict: Literal[True]
+
 
 class CacheRecord(BaseModel):
     qa: ExtractedQuestionAnswer | None
@@ -144,7 +149,10 @@ class CacheRecord(BaseModel):
     judge_with_context: JudgeTripletFilter | None
     judge_without_context: JudgeTripletFilter | None
 
-EMPTY = CacheRecord(qa=None, rubric=None, judge_with_context=None, judge_without_context=None)
+
+EMPTY = CacheRecord(
+    qa=None, rubric=None, judge_with_context=None, judge_without_context=None
+)
 
 client = AsyncOpenAI(
     base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:8000/v1"),
@@ -165,14 +173,22 @@ if os.path.exists(CACHE_PATH):
     print(f"Loaded {len(cache)} cached completions from {CACHE_PATH}.")
 
 
-async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyncio.Lock) -> CacheRecord:
+async def create_completion(
+    texts: List[str], sem: asyncio.Semaphore, lock: asyncio.Lock
+) -> CacheRecord:
     """Return completion for *text*, using cache when available.
 
     If the completion is not cached, it is requested from the model, then stored
     immediately so progress persists across crashes/restarts.
     """
     key = hashlib.md5(
-        (json.dumps(texts, ensure_ascii=False) + SYNTH_PROMPT + RUBRIC_PROMPT + ANSWER_PROMPT + ANSWER_PROMPT_WITH_CONTEXT).encode("utf-8")
+        (
+            json.dumps(texts, ensure_ascii=False)
+            + SYNTH_PROMPT
+            + RUBRIC_PROMPT
+            + ANSWER_PROMPT
+            + ANSWER_PROMPT_WITH_CONTEXT
+        ).encode("utf-8")
     ).hexdigest()
 
     # Reuse from cache if we already have it.
@@ -183,10 +199,12 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
     async with sem:
         try:
             qa_resp = await client.chat.completions.parse(
-                messages=[{
-                    "role": "user",
-                    "content": SYNTH_PROMPT.format(texts=_join(texts)),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": SYNTH_PROMPT.format(texts=_join(texts)),
+                    }
+                ],
                 model=MODEL,
                 max_completion_tokens=SYNTH_MAX_LENGTH,
                 response_format=ExtractedQuestionAnswer,
@@ -197,14 +215,16 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
                 return EMPTY
 
             rubric_resp = await client.chat.completions.parse(
-                messages=[{
-                    "role": "user",
-                    "content": RUBRIC_PROMPT.format(
-                        question=qa.question,
-                        answer=qa.answer,
-                        context_text=_join(texts),
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": RUBRIC_PROMPT.format(
+                            question=qa.question,
+                            answer=qa.answer,
+                            context_text=_join(texts),
+                        ),
+                    }
+                ],
                 model=MODEL,
                 max_completion_tokens=RUBRIC_MAX_LENGTH,
                 response_format=RubricFilter,
@@ -215,22 +235,26 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
                 return EMPTY
 
             response_no_context = await client.chat.completions.create(
-                messages=[{
-                    "role": "user",
-                    "content": ANSWER_PROMPT.format(question=qa.question),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": ANSWER_PROMPT.format(question=qa.question),
+                    }
+                ],
                 model=MODEL,
             )
 
             judge_resp = await client.chat.completions.parse(
-                messages=[{
-                    "role": "user",
-                    "content": JUDGE_PROMPT.format(
-                        question=qa.question,
-                        response=response_no_context.choices[0].message.content,
-                        correct_answer=qa.answer,
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": JUDGE_PROMPT.format(
+                            question=qa.question,
+                            response=response_no_context.choices[0].message.content,
+                            correct_answer=qa.answer,
+                        ),
+                    }
+                ],
                 model=MODEL,
                 max_completion_tokens=32768,
                 response_format=JudgeTripletFilter,
@@ -240,25 +264,29 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
                 return EMPTY
 
             response_with_context = await client.chat.completions.create(
-                messages=[{
-                    "role": "user",
-                    "content": ANSWER_PROMPT_WITH_CONTEXT.format(
-                        question=qa.question,
-                        texts=_join(texts),
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": ANSWER_PROMPT_WITH_CONTEXT.format(
+                            question=qa.question,
+                            texts=_join(texts),
+                        ),
+                    }
+                ],
                 model=MODEL,
             )
 
             judge_resp_context = await client.chat.completions.parse(
-                messages=[{
-                    "role": "user",
-                    "content": JUDGE_PROMPT.format(
-                        question=qa.question,
-                        response=response_with_context.choices[0].message.content,
-                        correct_answer=qa.answer,
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": JUDGE_PROMPT.format(
+                            question=qa.question,
+                            response=response_with_context.choices[0].message.content,
+                            correct_answer=qa.answer,
+                        ),
+                    }
+                ],
                 model=MODEL,
                 max_completion_tokens=32768,
                 response_format=JudgeTripletFilter,
@@ -266,15 +294,20 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
             judgement_context = judge_resp_context.choices[0].message.parsed
             if judgement_context is None:
                 return EMPTY
-            
+
         except BadRequestError as ex:
             print("RUBRIC error:", ex)
             return EMPTY
         except Exception as ex:
             print("Error", ex)
             return EMPTY
-    
-    record = CacheRecord(qa=qa, rubric=rubric, judge_with_context=judgement, judge_without_context=judgement_context)
+
+    record = CacheRecord(
+        qa=qa,
+        rubric=rubric,
+        judge_with_context=judgement,
+        judge_without_context=judgement_context,
+    )
 
     async with lock:
         cache[key] = record
@@ -291,7 +324,9 @@ async def create_completion(texts: List[str], sem: asyncio.Semaphore, lock: asyn
 
 
 def _join(texts):
-    return "\n\n".join(f"# Article {i+1}/{len(texts)}:\n\n{text}" for i, text in enumerate(texts))
+    return "\n\n".join(
+        f"# Article {i+1}/{len(texts)}:\n\n{text}" for i, text in enumerate(texts)
+    )
 
 
 async def main():
@@ -324,16 +359,16 @@ async def main():
     responses: List[CacheRecord] = []
 
     # Outer progress bar for batches.
-    for batch_idx in tqdm(range(num_batches), desc=f"Batches (samples={num_rows})", unit="batch"):
+    for batch_idx in tqdm(
+        range(num_batches), desc=f"Batches (samples={num_rows})", unit="batch"
+    ):
         start = batch_idx * LOADED_BATCH_SIZE
         end = min(start + LOADED_BATCH_SIZE, num_rows)
         batch = ds.select(range(start, end))
 
         # Spawn completion tasks for this batch only.
         tasks = [
-            asyncio.create_task(
-                create_completion(texts, semaphore, CACHE_WRITE_LOCK)
-            )
+            asyncio.create_task(create_completion(texts, semaphore, CACHE_WRITE_LOCK))
             for texts in batch["texts"]
         ]
 
@@ -344,7 +379,7 @@ async def main():
             leave=False,
         )
         responses.extend(batch_responses)
-    
+
     # Collect indices that have both qa and rubric
     keep_indices = [
         idx
@@ -354,17 +389,11 @@ async def main():
 
     ds = ds.select(keep_indices)
 
-    ds = ds.add_column(
-        "question",
-        [responses[idx].qa.question for idx in keep_indices]
-    )
-    ds = ds.add_column(
-        "answer",
-        [responses[idx].qa.answer for idx in keep_indices]
-    )
+    ds = ds.add_column("question", [responses[idx].qa.question for idx in keep_indices])
+    ds = ds.add_column("answer", [responses[idx].qa.answer for idx in keep_indices])
     ds = ds.remove_columns(["embeds", "avg_similarity"])
 
-    # TODO: semhash deduplication    
+    # TODO: semhash deduplication
     print(ds)
     print("Completions done!")
 
