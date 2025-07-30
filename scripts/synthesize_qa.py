@@ -196,6 +196,128 @@ async def async_backoff(
             await asyncio.sleep(sleep_for)
             delay *= backoff_factor
 
+async def _get_record(texts) -> CacheRecord:
+    try:
+        qa_resp = await async_backoff(
+            client.chat.completions.parse,
+            messages=[
+                {
+                    "role": "user",
+                    "content": SYNTH_PROMPT.format(texts=_join(texts)),
+                }
+            ],
+            model=MODEL,
+            max_completion_tokens=SYNTH_MAX_LENGTH,
+            response_format=ExtractedQuestionAnswer,
+        )
+        qa = qa_resp.choices[0].message.parsed
+
+        if qa is None:
+            return EMPTY
+
+        rubric_resp = await async_backoff(
+            client.chat.completions.parse,
+            messages=[
+                {
+                    "role": "user",
+                    "content": RUBRIC_PROMPT.format(
+                        question=qa.question,
+                        answer=qa.answer,
+                        context_text=_join(texts),
+                    ),
+                }
+            ],
+            model=MODEL,
+            max_completion_tokens=RUBRIC_MAX_LENGTH,
+            response_format=RubricFilter,
+        )
+        rubric = rubric_resp.choices[0].message.parsed
+
+        if rubric is None:
+            return EMPTY
+
+        response_no_context = await async_backoff(
+            client.chat.completions.create,
+            messages=[
+                {
+                    "role": "user",
+                    "content": ANSWER_PROMPT.format(question=qa.question),
+                }
+            ],
+            model=MODEL,
+        )
+
+        judge_resp = await async_backoff(
+            client.chat.completions.parse,
+            messages=[
+                {
+                    "role": "user",
+                    "content": JUDGE_PROMPT.format(
+                        question=qa.question,
+                        response=response_no_context.choices[0].message.content,
+                        correct_answer=qa.answer,
+                    ),
+                }
+            ],
+            model=MODEL,
+            max_completion_tokens=32768,
+            response_format=JudgeTripletFilter,
+        )
+        judgement = judge_resp.choices[0].message.parsed
+        if judgement is None:
+            return EMPTY
+
+        response_with_context = await async_backoff(
+            client.chat.completions.create,
+            messages=[
+                {
+                    "role": "user",
+                    "content": ANSWER_PROMPT_WITH_CONTEXT.format(
+                        question=qa.question,
+                        texts=_join(texts),
+                    ),
+                }
+            ],
+            model=MODEL,
+        )
+
+        judge_resp_context = await async_backoff(
+            client.chat.completions.parse,
+            messages=[
+                {
+                    "role": "user",
+                    "content": JUDGE_PROMPT.format(
+                        question=qa.question,
+                        response=response_with_context.choices[0].message.content,
+                        correct_answer=qa.answer,
+                    ),
+                }
+            ],
+            model=MODEL,
+            max_completion_tokens=32768,
+            response_format=JudgeTripletFilter,
+        )
+        judgement_context = judge_resp_context.choices[0].message.parsed
+        if judgement_context is None:
+            return EMPTY
+
+    except BadRequestError as ex:
+        print("Error:", ex)
+        return EMPTY
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        print("Exiting process due to unknown error...")
+        exit(0)
+    
+    return CacheRecord(
+        qa=qa,
+        rubric=rubric,
+        judge_with_context=judgement_context,
+        judge_without_context=judgement,
+    )
+
+
 async def create_completion(
     texts: List[str], sem: asyncio.Semaphore, lock: asyncio.Lock
 ) -> CacheRecord:
@@ -220,125 +342,7 @@ async def create_completion(
 
     # Get chain of model completions
     async with sem:
-        try:
-            qa_resp = await async_backoff(
-                client.chat.completions.parse,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": SYNTH_PROMPT.format(texts=_join(texts)),
-                    }
-                ],
-                model=MODEL,
-                max_completion_tokens=SYNTH_MAX_LENGTH,
-                response_format=ExtractedQuestionAnswer,
-            )
-            qa = qa_resp.choices[0].message.parsed
-
-            if qa is None:
-                return EMPTY
-
-            rubric_resp = await async_backoff(
-                client.chat.completions.parse,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": RUBRIC_PROMPT.format(
-                            question=qa.question,
-                            answer=qa.answer,
-                            context_text=_join(texts),
-                        ),
-                    }
-                ],
-                model=MODEL,
-                max_completion_tokens=RUBRIC_MAX_LENGTH,
-                response_format=RubricFilter,
-            )
-            rubric = rubric_resp.choices[0].message.parsed
-
-            if rubric is None:
-                return EMPTY
-
-            response_no_context = await async_backoff(
-                client.chat.completions.create,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": ANSWER_PROMPT.format(question=qa.question),
-                    }
-                ],
-                model=MODEL,
-            )
-
-            judge_resp = await async_backoff(
-                client.chat.completions.parse,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": JUDGE_PROMPT.format(
-                            question=qa.question,
-                            response=response_no_context.choices[0].message.content,
-                            correct_answer=qa.answer,
-                        ),
-                    }
-                ],
-                model=MODEL,
-                max_completion_tokens=32768,
-                response_format=JudgeTripletFilter,
-            )
-            judgement = judge_resp.choices[0].message.parsed
-            if judgement is None:
-                return EMPTY
-
-            response_with_context = await async_backoff(
-                client.chat.completions.create,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": ANSWER_PROMPT_WITH_CONTEXT.format(
-                            question=qa.question,
-                            texts=_join(texts),
-                        ),
-                    }
-                ],
-                model=MODEL,
-            )
-
-            judge_resp_context = await async_backoff(
-                client.chat.completions.parse,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": JUDGE_PROMPT.format(
-                            question=qa.question,
-                            response=response_with_context.choices[0].message.content,
-                            correct_answer=qa.answer,
-                        ),
-                    }
-                ],
-                model=MODEL,
-                max_completion_tokens=32768,
-                response_format=JudgeTripletFilter,
-            )
-            judgement_context = judge_resp_context.choices[0].message.parsed
-            if judgement_context is None:
-                return EMPTY
-
-        except BadRequestError as ex:
-            print("RUBRIC error:", ex)
-            return EMPTY
-        except Exception as ex:
-            import traceback
-            traceback.print_exc()
-            print("Exiting process due to unknown error...")
-            exit(0)
-
-    record = CacheRecord(
-        qa=qa,
-        rubric=rubric,
-        judge_with_context=judgement_context,
-        judge_without_context=judgement,
-    )
+        record: CacheRecord = await _get_record(texts)
 
     async with lock:
         cache[key] = record
