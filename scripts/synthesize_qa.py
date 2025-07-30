@@ -370,12 +370,13 @@ async def create_completion(
         and record.rubric.abstractiveness >= 4
         and record.rubric.conflict_synthesis >= 4
     )
-    if is_acceptable_record:
-        return record
-    else:
+
+    if not is_acceptable_record:
         record = copy.deepcopy(EMPTY)
         record.sample_id = sample_id
         return record
+    
+    return record
 
 
 def _join(texts):
