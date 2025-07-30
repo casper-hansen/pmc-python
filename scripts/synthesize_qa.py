@@ -395,7 +395,7 @@ async def main():
         "casperhansen/pmc-oa-markdown-clustering",
         split="train",
         num_proc=8,
-    ).take(20)
+    )
     tokenizer = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
     ds = ds.filter(
         lambda batch: [
