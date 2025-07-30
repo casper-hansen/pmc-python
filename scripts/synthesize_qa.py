@@ -23,6 +23,7 @@ from openai.types.chat import ParsedChatCompletion, ChatCompletion
 from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
+from semhash import SemHash
 
 MAX_CONCURRENT_REQUESTS = 10
 LOADED_BATCH_SIZE = 1000
@@ -330,8 +331,7 @@ async def create_completion(
     """
     key = hashlib.md5(
         (
-            sample_id
-            + json.dumps(texts, ensure_ascii=False)
+            json.dumps(texts, ensure_ascii=False)
             + SYNTH_PROMPT
             + RUBRIC_PROMPT
             + ANSWER_PROMPT
@@ -450,7 +450,14 @@ async def main():
     ds = ds.remove_columns(["embeds", "avg_similarity"])
     ds = ds.rename_column("texts", "context")
 
-    # TODO: semhash deduplication
+    # deduplication to increase diversity
+    records = [{"id": i, "question": ds[i]["question"], "answer": ds[i]["answer"]} for i in range(len(ds))]
+    semhash   = SemHash.from_records(records, columns=["question", "answer"])
+    dedup_res = semhash.self_deduplicate(threshold=0.9)
+    keep_ids = [r["id"] for r in dedup_res.selected]
+    ds = ds.select(keep_ids)
+
+    print(f"Kept {len(keep_ids):,} / {len(records):,} after SemHash")
     print(ds)
     print("Completions done!")
 
