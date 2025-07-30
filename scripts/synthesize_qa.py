@@ -367,7 +367,11 @@ async def create_completion(
 
     # filter for correctness and quality
     is_acceptable_record = (
-        record.judge_with_context.correct == "yes"
+        record.qa is not None
+        and record.rubric is not None
+        and record.judge_with_context is not None
+        and record.judge_without_context is not None
+        and record.judge_with_context.correct == "yes"
         and record.judge_without_context.correct == "no"
         and record.rubric.difficulty in ["graduate", "phd"]
         and record.rubric.askability >= 4
