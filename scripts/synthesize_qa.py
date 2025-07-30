@@ -164,13 +164,18 @@ client = AsyncOpenAI(
 cache: dict[str, CacheRecord] = {}
 
 if os.path.exists(CACHE_PATH):
+    ds = load_dataset(
+        "json",
+        data_files=[CACHE_PATH],
+        split="train",
+        streaming=True,
+    )
     with open(CACHE_PATH, "r") as fh:
-        for line in fh:
+        for row in ds:
             try:
-                record = json.loads(line)
-                cache[record["hash"]] = CacheRecord(**record["response"])
-            except json.JSONDecodeError:
-                # Skip malformed lines (e.g., partial writes)
+                cache[row["hash"]] = CacheRecord(**row["response"])
+            except (KeyError, TypeError, ValueError):
+                # if the row is malformed or missing keys, skip it
                 continue
     print(f"Loaded {len(cache)} cached completions from {CACHE_PATH}.")
 
