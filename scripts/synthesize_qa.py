@@ -23,7 +23,7 @@ import random
 from tqdm import tqdm
 from typing import List, Dict, Literal, Callable, Awaitable, Union
 from pydantic import BaseModel, Field, StringConstraints
-from openai import AsyncOpenAI, BadRequestError, RateLimitError, DefaultAioHttpClient
+from openai import AsyncOpenAI, BadRequestError, RateLimitError, DefaultAioHttpClient, InternalServerError
 from openai.types.chat import ParsedChatCompletion, ChatCompletion
 from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
@@ -199,7 +199,7 @@ async def async_backoff(
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
-        except RateLimitError as err:
+        except (RateLimitError, InternalServerError) as err:
             if attempt == max_retries - 1:
                 raise
             sleep_for = delay + random.uniform(0, delay * jitter)
