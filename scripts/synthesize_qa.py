@@ -25,7 +25,7 @@ from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
 from semhash import SemHash
 
-MAX_CONCURRENT_REQUESTS = 10
+MAX_CONCURRENT_REQUESTS = 100
 LOADED_BATCH_SIZE = 1000
 SYNTH_MAX_LENGTH = 32768
 RUBRIC_MAX_LENGTH = 16384
