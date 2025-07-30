@@ -164,14 +164,14 @@ client = AsyncOpenAI(
 cache: dict[str, CacheRecord] = {}
 
 if os.path.exists(CACHE_PATH):
-    ds = load_dataset(
+    ds_cache = load_dataset(
         "json",
         data_files=[CACHE_PATH],
         split="train",
         streaming=True,
     )
     with open(CACHE_PATH, "r") as fh:
-        for row in ds:
+        for row in ds_cache:
             try:
                 cache[row["hash"]] = CacheRecord(**row["response"])
             except (KeyError, TypeError, ValueError):
