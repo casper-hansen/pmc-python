@@ -338,22 +338,21 @@ async def create_completion(
 
     # Reuse from cache if we already have it.
     if key in cache:
-        return cache[key]
+        record = cache[key]
+    else:
+        async with sem:
+            record: CacheRecord = await _get_record(texts)
 
-    # Get chain of model completions
-    async with sem:
-        record: CacheRecord = await _get_record(texts)
-
-    async with lock:
-        cache[key] = record
-        with open(CACHE_PATH, "a") as fh:
-            fh.write(
-                json.dumps(
-                    {"hash": key, "response": record.model_dump()},
-                    ensure_ascii=False,
+        async with lock:
+            cache[key] = record
+            with open(CACHE_PATH, "a") as fh:
+                fh.write(
+                    json.dumps(
+                        {"hash": key, "response": record.model_dump()},
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
 
     return record
 
