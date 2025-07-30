@@ -466,6 +466,14 @@ async def main():
     print(ds)
     print("Completions done!")
 
+    # save dataset and cache on hub
+    DatasetDict({"train": ds}).push_to_hub(
+        "casperhansen/pmc-oa-markdown-qa"
+    )
+    load_dataset("json", data_files=[CACHE_PATH]).push_to_hub(
+        "casperhansen/pmc-oa-markdown-qa-cache"
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(main())
