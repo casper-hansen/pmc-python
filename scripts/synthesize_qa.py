@@ -10,6 +10,7 @@ In this script, I perform synthetic data generation and extensive filtering.
 # uv venv
 # source .venv/bin/activate
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -143,6 +144,7 @@ class JudgeTripletFilter(BaseModel):
 
 
 class CacheRecord(BaseModel):
+    sample_id: int | None = None
     qa: ExtractedQuestionAnswer | None
     rubric: RubricFilter | None
     judge_with_context: JudgeTripletFilter | None
@@ -150,7 +152,7 @@ class CacheRecord(BaseModel):
 
 
 EMPTY = CacheRecord(
-    qa=None, rubric=None, judge_with_context=None, judge_without_context=None
+    sample_id=None, qa=None, rubric=None, judge_with_context=None, judge_without_context=None
 )
 
 client = AsyncOpenAI(
@@ -319,7 +321,7 @@ async def _get_record(texts) -> CacheRecord:
 
 
 async def create_completion(
-    texts: List[str], sem: asyncio.Semaphore, lock: asyncio.Lock
+    sample_id: int, texts: List[str], sem: asyncio.Semaphore, lock: asyncio.Lock
 ) -> CacheRecord:
     """Return completion for *text*, using cache when available.
 
@@ -328,7 +330,8 @@ async def create_completion(
     """
     key = hashlib.md5(
         (
-            json.dumps(texts, ensure_ascii=False)
+            sample_id
+            + json.dumps(texts, ensure_ascii=False)
             + SYNTH_PROMPT
             + RUBRIC_PROMPT
             + ANSWER_PROMPT
@@ -343,6 +346,9 @@ async def create_completion(
         async with sem:
             record: CacheRecord = await _get_record(texts)
 
+        record = copy.deepcopy(record)
+        record.sample_id = sample_id
+
         async with lock:
             cache[key] = record
             with open(CACHE_PATH, "a") as fh:
@@ -354,7 +360,22 @@ async def create_completion(
                     + "\n"
                 )
 
-    return record
+    # filter for correctness and quality
+    is_acceptable_record = (
+        record.judge_with_context.correct == "yes"
+        and record.judge_without_context.correct == "no"
+        and record.rubric.difficulty in ["graduate", "phd"]
+        and record.rubric.askability >= 4
+        and record.rubric.synthesizability >= 4
+        and record.rubric.abstractiveness >= 4
+        and record.rubric.conflict_synthesis >= 4
+    )
+    if is_acceptable_record:
+        return record
+    else:
+        record = copy.deepcopy(EMPTY)
+        record.sample_id = sample_id
+        return record
 
 
 def _join(texts):
@@ -402,8 +423,8 @@ async def main():
 
         # Spawn completion tasks for this batch only.
         tasks = [
-            asyncio.create_task(create_completion(texts, semaphore, CACHE_WRITE_LOCK))
-            for texts in batch["texts"]
+            asyncio.create_task(create_completion(start + local_idx, texts, semaphore, CACHE_WRITE_LOCK))
+            for local_idx, texts in enumerate(batch["texts"])
         ]
 
         # Inner progress bar for the current batch.
@@ -416,8 +437,8 @@ async def main():
 
     # Collect indices that have both qa and rubric
     keep_indices = [
-        idx
-        for idx, r in enumerate(responses)
+        r.sample_id
+        for r in responses
         if r.qa is not None and r.rubric is not None
     ]
 
@@ -426,6 +447,7 @@ async def main():
     ds = ds.add_column("question", [responses[idx].qa.question for idx in keep_indices])
     ds = ds.add_column("answer", [responses[idx].qa.answer for idx in keep_indices])
     ds = ds.remove_columns(["embeds", "avg_similarity"])
+    ds = ds.rename_column("texts", "context")
 
     # TODO: semhash deduplication
     print(ds)
