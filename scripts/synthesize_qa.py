@@ -1,4 +1,8 @@
 """
+Get started:
+uv pip install tqdm pydantic openai[aiohttp] datasets transformers semhash
+uv run python -u scripts/synthesize_qa.py
+
 In this script, I perform synthetic data generation and extensive filtering.
 
 3 modes of filtering:
@@ -12,13 +16,14 @@ In this script, I perform synthetic data generation and extensive filtering.
 import asyncio
 import copy
 import hashlib
+import httpx
 import json
 import os
 import random
 from tqdm import tqdm
 from typing import List, Dict, Literal, Callable, Awaitable, Union
 from pydantic import BaseModel, Field, StringConstraints
-from openai import AsyncOpenAI, BadRequestError, RateLimitError
+from openai import AsyncOpenAI, BadRequestError, RateLimitError, DefaultAioHttpClient
 from openai.types.chat import ParsedChatCompletion, ChatCompletion
 from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
@@ -159,6 +164,7 @@ EMPTY = CacheRecord(
 client = AsyncOpenAI(
     base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:8000/v1"),
     api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+    http_client=DefaultAioHttpClient(timeout=httpx.Timeout(900))
 )
 
 cache: dict[str, CacheRecord] = {}
