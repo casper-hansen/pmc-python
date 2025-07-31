@@ -23,7 +23,7 @@ import random
 from tqdm import tqdm
 from typing import List, Dict, Literal, Callable, Awaitable, Union
 from pydantic import BaseModel, Field, StringConstraints
-from openai import AsyncOpenAI, BadRequestError, RateLimitError, DefaultAioHttpClient, InternalServerError
+from openai import AsyncOpenAI, DefaultAioHttpClient, BadRequestError, LengthFinishReasonError
 from openai.types.chat import ParsedChatCompletion, ChatCompletion
 from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
@@ -199,13 +199,13 @@ async def async_backoff(
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
-        except (RateLimitError, InternalServerError) as err:
+        except Exception as err:
             if attempt == max_retries - 1:
                 raise
             sleep_for = delay + random.uniform(0, delay * jitter)
             print(
-                f"[Rate-limit]: {attempt+1}/{max_retries} "
-                f"in {sleep_for:.1f}s ({err.message})"
+                f"[Error]: {attempt+1}/{max_retries} "
+                f"in {sleep_for:.1f}s ({err})"
             )
             await asyncio.sleep(sleep_for)
             delay *= backoff_factor
@@ -315,7 +315,7 @@ async def _get_record(texts) -> CacheRecord:
         if judgement_context is None:
             return EMPTY
 
-    except BadRequestError as ex:
+    except (BadRequestError, LengthFinishReasonError) as ex:
         print("Error:", ex)
         return EMPTY
     except Exception as ex:
