@@ -424,32 +424,17 @@ async def main():
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
-    num_rows = len(ds)
-    num_batches = (num_rows + LOADED_BATCH_SIZE - 1) // LOADED_BATCH_SIZE
+    # Spawn completion tasks
+    tasks = [
+        asyncio.create_task(create_completion(index, texts, semaphore, CACHE_WRITE_LOCK))
+        for index, texts in enumerate(ds["texts"])
+    ]
 
-    responses: List[CacheRecord] = []
-
-    # Outer progress bar for batches.
-    for batch_idx in tqdm(
-        range(num_batches), desc=f"Batches (samples={num_rows})", unit="batch"
-    ):
-        start = batch_idx * LOADED_BATCH_SIZE
-        end = min(start + LOADED_BATCH_SIZE, num_rows)
-        batch = ds.select(range(start, end))
-
-        # Spawn completion tasks for this batch only.
-        tasks = [
-            asyncio.create_task(create_completion(start + local_idx, texts, semaphore, CACHE_WRITE_LOCK))
-            for local_idx, texts in enumerate(batch["texts"])
-        ]
-
-        # Inner progress bar for the current batch.
-        batch_responses = await tqdm_asyncio.gather(
-            *tasks,
-            desc=f"Completions (batch {batch_idx + 1}/{num_batches})",
-            leave=False,
-        )
-        responses.extend(batch_responses)
+    # Progress bar
+    responses: List[CacheRecord] = await tqdm_asyncio.gather(
+        *tasks,
+        desc=f"Completions",
+    )
 
     # Collect indices that have both qa and rubric
     keep_indices = [
@@ -476,8 +461,40 @@ async def main():
     print(ds)
     print("Completions done!")
 
+    # Categorize hardest samples
+    id2row = {orig_id: new_row for new_row, orig_id in enumerate(keep_ids)}
+    hard_ids = []
+    standard_ids = []
+    for record in responses:
+        if record.sample_id not in id2row:
+            continue
+
+        is_hard_record = (
+            record.qa is not None
+            and record.rubric is not None
+            and record.judge_with_context is not None
+            and record.judge_without_context is not None
+            and record.judge_with_context.correct == "yes"
+            and record.judge_without_context.correct == "no"
+            and record.rubric.difficulty in ["phd"]
+            and record.rubric.askability >= 4
+            and record.rubric.synthesizability >= 4
+            and record.rubric.abstractiveness >= 4
+            and record.rubric.conflict_synthesis >= 4
+        )
+        if is_hard_record:
+            hard_ids.append(id2row[record.sample_id])
+        else:
+            standard_ids.append(id2row[record.sample_id])
+
+    train_ds = ds.select(standard_ids)
+    test_ds = ds.select(hard_ids)
+
+    print("train:", train_ds)
+    print("test:", test_ds)
+
     # save dataset and cache on hub
-    DatasetDict({"train": ds}).push_to_hub(
+    DatasetDict({"train": train_ds, "test": test_ds}).push_to_hub(
         "casperhansen/pmc-oa-markdown-qa"
     )
     load_dataset("json", data_files=[CACHE_PATH]).push_to_hub(
