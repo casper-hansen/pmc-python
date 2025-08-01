@@ -20,7 +20,7 @@ from openai.types.chat import ParsedChatCompletion, ChatCompletion
 from datasets import load_dataset
 from tqdm.asyncio import tqdm_asyncio
 
-MAX_CONCURRENT_REQUESTS = 100
+MAX_CONCURRENT_REQUESTS = 200
 CACHE_PATH = "data/qa_cache_eval.jsonl"
 EVAL_MODEL = "zai-org/GLM-4.5-FP8"
 JUDGE_MODEL = "deepseek-ai/DeepSeek-R1-0528"
@@ -219,7 +219,7 @@ def compute_accuracy(responses: List[CacheRecord]) -> Tuple[float, float, float]
 async def main():
     ds = load_dataset(
         "casperhansen/pmc-oa-markdown-qa",
-        split="train",
+        split="test",
         num_proc=8,
     )
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
