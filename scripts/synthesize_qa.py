@@ -11,8 +11,6 @@ In this script, I perform synthetic data generation and extensive filtering.
 3. Quality: Scores well on rubric
 """
 
-# uv venv
-# source .venv/bin/activate
 import asyncio
 import copy
 import hashlib
@@ -20,17 +18,20 @@ import httpx
 import json
 import os
 import random
-from tqdm import tqdm
-from typing import List, Dict, Literal, Callable, Awaitable, Union
+from typing import List, Literal, Callable, Awaitable, Union
 from pydantic import BaseModel, Field, StringConstraints
-from openai import AsyncOpenAI, DefaultAioHttpClient, BadRequestError, LengthFinishReasonError
+from openai import AsyncOpenAI, DefaultAioHttpClient, BadRequestError, LengthFinishReasonError, RateLimitError
 from openai.types.chat import ParsedChatCompletion, ChatCompletion
 from datasets import load_dataset, DatasetDict
 from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
 from semhash import SemHash
 
-MAX_CONCURRENT_REQUESTS = 100
+INCREMENT_CONCURRENT_REQUESTS = 10
+STABLE_SUCCESS_THRESHOLD = 50
+MIN_CONCURRENT_REQUESTS = 50
+MAX_CONCURRENT_REQUESTS = 300
+
 LOADED_BATCH_SIZE = 1000
 SYNTH_MAX_LENGTH = 32768
 RUBRIC_MAX_LENGTH = 16384
@@ -38,6 +39,11 @@ MAX_SAMPLE_LENGTH = 163840 - SYNTH_MAX_LENGTH - RUBRIC_MAX_LENGTH
 CACHE_PATH = "data/qa_cache.jsonl"
 MODEL = "deepseek-ai/DeepSeek-R1-0528"
 CACHE_WRITE_LOCK = asyncio.Lock()
+
+semaphore = asyncio.Semaphore(MIN_CONCURRENT_REQUESTS)
+_CURRENT_CONCURRENCY = MIN_CONCURRENT_REQUESTS
+_CONCURRENCY_LOCK = asyncio.Lock()
+_SUCCESS_SINCE_RL = 0
 
 SYNTH_PROMPT = """\
 You are an expert biomedical researcher tasked with synthesizing knowledge from multiple full-length biomedical documents that have been grouped together because they share extremely high topical similarity. Your goal is to generate a single, graduate-level question and its corresponding answer that can **only** be resolved by integrating information scattered across **all** provided texts. The question must be so demanding that a reader who has access to only one of the texts, or even most of them, would find it nearly impossible to answer correctly.
@@ -186,6 +192,55 @@ if os.path.exists(CACHE_PATH):
     print(f"Loaded {len(cache)} cached completions from {CACHE_PATH}.")
 
 
+async def _bump_success() -> bool:
+    """Increase success-counter; return True if we just hit the upscale mark."""
+    global _SUCCESS_SINCE_RL
+    async with _CONCURRENCY_LOCK:
+        _SUCCESS_SINCE_RL += 1
+        if _SUCCESS_SINCE_RL >= STABLE_SUCCESS_THRESHOLD:
+            _SUCCESS_SINCE_RL = 0
+            return True
+    return False
+
+
+async def _reset_success():
+    """Zero the success-counter (called on first RateLimitError)."""
+    global _SUCCESS_SINCE_RL
+    async with _CONCURRENCY_LOCK:
+        _SUCCESS_SINCE_RL = 0
+
+
+async def _adjust_concurrency(up: bool):
+    """
+    Grow/Shrink the global semaphore in INCREMENT_CONCURRENT_REQUESTS steps,
+    clamped to [MIN_CONCURRENT_REQUESTS, MAX_CONCURRENT_REQUESTS].
+    """
+    global _CURRENT_CONCURRENCY
+
+    async with _CONCURRENCY_LOCK:
+        if up:
+            if _CURRENT_CONCURRENCY >= MAX_CONCURRENT_REQUESTS:
+                return
+            delta = min(
+                INCREMENT_CONCURRENT_REQUESTS,
+                MAX_CONCURRENT_REQUESTS - _CURRENT_CONCURRENCY,
+            )
+            _CURRENT_CONCURRENCY += delta
+            for _ in range(delta):
+                semaphore.release()
+            print(f"[Concurrency] ↑  {_CURRENT_CONCURRENCY}")
+        else:
+            if _CURRENT_CONCURRENCY <= MIN_CONCURRENT_REQUESTS:
+                return
+            delta = min(
+                INCREMENT_CONCURRENT_REQUESTS,
+                _CURRENT_CONCURRENCY - MIN_CONCURRENT_REQUESTS,
+            )
+            _CURRENT_CONCURRENCY -= delta
+            semaphore._value -= delta        # tighten immediately
+            print(f"[Concurrency] ↓  {_CURRENT_CONCURRENCY}")
+
+
 async def async_backoff(
     func: Callable[..., Awaitable],
     *args,
@@ -196,17 +251,31 @@ async def async_backoff(
     **kwargs,
 ) -> Union[ParsedChatCompletion, ChatCompletion]:
     delay = initial_delay
+
     for attempt in range(max_retries):
         try:
-            return await func(*args, **kwargs)
+            result = await func(*args, **kwargs)
+            if await _bump_success():
+                await _adjust_concurrency(up=True)
+            return result
+
+        except RateLimitError as err:
+            await _reset_success()
+            await _adjust_concurrency(up=False)
+            if attempt == max_retries - 1:
+                raise
+            sleep_for = delay + random.uniform(0, delay * jitter)
+            print(f"[RateLimit] {attempt+1}/{max_retries} "
+                  f"retrying in {sleep_for:.1f}s ({err})")
+            await asyncio.sleep(sleep_for)
+            delay *= backoff_factor
+
         except Exception as err:
             if attempt == max_retries - 1:
                 raise
             sleep_for = delay + random.uniform(0, delay * jitter)
-            print(
-                f"[Error]: {attempt+1}/{max_retries} "
-                f"in {sleep_for:.1f}s ({err})"
-            )
+            print(f"[Error] {attempt+1}/{max_retries} "
+                  f"retrying in {sleep_for:.1f}s ({err})")
             await asyncio.sleep(sleep_for)
             delay *= backoff_factor
 
@@ -333,7 +402,7 @@ async def _get_record(texts) -> CacheRecord:
 
 
 async def create_completion(
-    sample_id: int, texts: List[str], sem: asyncio.Semaphore, lock: asyncio.Lock
+    sample_id: int, texts: List[str], lock: asyncio.Lock
 ) -> CacheRecord:
     """Return completion for *text*, using cache when available.
 
@@ -354,7 +423,7 @@ async def create_completion(
     if key in cache:
         record = cache[key]
     else:
-        async with sem:
+        async with semaphore:
             record: CacheRecord = await _get_record(texts)
 
         record = copy.deepcopy(record)
@@ -405,7 +474,7 @@ async def main():
         "casperhansen/pmc-oa-markdown-clustering",
         split="train",
         num_proc=8,
-    )
+    ).take(1000)
     tokenizer = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
     ds = ds.filter(
         lambda batch: [
@@ -422,11 +491,9 @@ async def main():
     )
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-
     # Spawn completion tasks
     tasks = [
-        asyncio.create_task(create_completion(index, texts, semaphore, CACHE_WRITE_LOCK))
+        asyncio.create_task(create_completion(index, texts, CACHE_WRITE_LOCK))
         for index, texts in enumerate(ds["texts"])
     ]
 
