@@ -2,6 +2,12 @@
 Get started:
 uv pip install tqdm pydantic openai[aiohttp] datasets
 nohup uv run python -u scripts/eval_qa.py > eval.log 2>&1 &
+
+The following environment variables are expected:
+export OPENAI_BASE_URL_EVAL=xyz
+export OPENAI_API_KEY_EVAL=123
+export OPENAI_BASE_URL_JUDGE=xyz
+export OPENAI_API_KEY_JUDGE=123
 """
 
 # uv venv
@@ -20,14 +26,14 @@ from openai.types.chat import ParsedChatCompletion, ChatCompletion
 from datasets import load_dataset
 from tqdm.asyncio import tqdm_asyncio
 
-MAX_CONCURRENT_REQUESTS = 200
+MAX_CONCURRENT_REQUESTS = 50
 CACHE_PATH = "data/qa_cache_eval.jsonl"
 EVAL_MODEL = "zai-org/GLM-4.5-FP8"
-JUDGE_MODEL = "deepseek-ai/DeepSeek-R1-0528"
+JUDGE_MODEL = "o4-mini"
 CACHE_WRITE_LOCK = asyncio.Lock()
 
 ANSWER_PROMPT = """\
-You are a biomedical expert. Below, You must attempt to answer the question below correctly.
+You are a biomedical expert. Below, You must attempt to answer the question below with a correct conclusion.
 
 Question: {question}
 """
@@ -65,9 +71,15 @@ class CacheRecord(BaseModel):
 
 EMPTY = CacheRecord(sample_id=None, judge=None)
 
-client = AsyncOpenAI(
-    base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:8000/v1"),
-    api_key=os.getenv("OPENAI_API_KEY", "test-key"),
+client_eval = AsyncOpenAI(
+    base_url=os.getenv("OPENAI_BASE_URL_EVAL", "http://localhost:8000/v1"),
+    api_key=os.getenv("OPENAI_API_KEY_EVAL", "test-key"),
+    http_client=DefaultAioHttpClient(timeout=httpx.Timeout(900))
+)
+
+client_judge = AsyncOpenAI(
+    base_url=os.getenv("OPENAI_BASE_URL_JUDGE", "http://localhost:8000/v1"),
+    api_key=os.getenv("OPENAI_API_KEY_JUDGE", "test-key"),
     http_client=DefaultAioHttpClient(timeout=httpx.Timeout(900))
 )
 
@@ -116,25 +128,39 @@ async def async_backoff(
 
 async def _get_record(question: str, answer: str) -> CacheRecord:
     try:
-        response_no_context = await async_backoff(
-            client.chat.completions.create,
-            messages=[
-                {
-                    "role": "user",
-                    "content": ANSWER_PROMPT.format(question=question),
-                }
-            ],
-            model=EVAL_MODEL,
-        )
+        if "deep-research" in EVAL_MODEL:
+            response_no_context = await async_backoff(
+                client_eval.responses.create,
+                input=ANSWER_PROMPT.format(question=question),
+                model=EVAL_MODEL,
+                tools=[
+                    {"type": "web_search_preview"},
+                ]
+            )
+
+            generated_answer = response_no_context.output_text
+        else:
+            response_no_context = await async_backoff(
+                client_eval.chat.completions.create,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": ANSWER_PROMPT.format(question=question),
+                    }
+                ],
+                model=EVAL_MODEL,
+            )
+
+            generated_answer = response_no_context.choices[0].message.content
 
         judge_resp = await async_backoff(
-            client.chat.completions.parse,
+            client_judge.chat.completions.parse,
             messages=[
                 {
                     "role": "user",
                     "content": JUDGE_PROMPT.format(
                         question=question,
-                        response=response_no_context.choices[0].message.content,
+                        response=generated_answer,
                         correct_answer=answer,
                     ),
                 }
@@ -238,7 +264,7 @@ async def main():
 
     accuracy, correct, incorrect = compute_accuracy(responses)
 
-    print(f"** Accuracy: {accuracy*100:.2f}% ({correct}/{incorrect} were correct)")
+    print(f"** Accuracy: {accuracy*100:.2f}% ({correct}/{incorrect+correct} were correct)")
 
 
 if __name__ == "__main__":
