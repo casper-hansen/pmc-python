@@ -27,9 +27,10 @@ from datasets import load_dataset
 from tqdm.asyncio import tqdm_asyncio
 
 MAX_CONCURRENT_REQUESTS = 50
-CACHE_PATH = "data/qa_cache_eval.jsonl"
-EVAL_MODEL = "zai-org/GLM-4.5-FP8"
-JUDGE_MODEL = "o4-mini"
+CACHE_PATH = "data/qa_cache_eval_grok4search.jsonl"
+EVAL_MODEL = "x-ai/grok-4"
+JUDGE_MODEL = "openai/o4-mini"
+OPENROUTER_RESPONSES_SEARCH = True
 CACHE_WRITE_LOCK = asyncio.Lock()
 
 ANSWER_PROMPT = """\
@@ -139,6 +140,20 @@ async def _get_record(question: str, answer: str) -> CacheRecord:
             )
 
             generated_answer = response_no_context.output_text
+        elif OPENROUTER_RESPONSES_SEARCH:
+            response_no_context = await async_backoff(
+                client_eval.responses.create,
+                input=ANSWER_PROMPT.format(question=question),
+                model=EVAL_MODEL,
+                reasoning={"effort": "high"},
+                extra_body={
+                    "plugins": [
+                        {"id": "web", "max_results": 10}
+                    ]
+                }
+            )
+
+            generated_answer = response_no_context.output_text
         else:
             response_no_context = await async_backoff(
                 client_eval.chat.completions.create,
@@ -149,9 +164,17 @@ async def _get_record(question: str, answer: str) -> CacheRecord:
                     }
                 ],
                 model=EVAL_MODEL,
+                extra_body={"reasoning": {"enabled": True, "effort": "high"}},
             )
 
+            if not hasattr(response_no_context, "choices"):
+                print("no choices, returning incorrect")
+                return EMPTY
             generated_answer = response_no_context.choices[0].message.content
+        
+        if generated_answer.strip() == "":
+            print("empty response, returning incorrect")
+            return EMPTY
 
         judge_resp = await async_backoff(
             client_judge.chat.completions.parse,
